@@ -7,7 +7,7 @@ import tempfile
 import os
 
 # Получите токен у @BotFather
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = "8355527644:AAEFom51F7_2dsZyAyXkzgY8zEXaGbpi2PE"
 bot = telebot.TeleBot(TOKEN)
 
 def enhance_photo(image_bytes):
