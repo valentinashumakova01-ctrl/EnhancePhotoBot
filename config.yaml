@@ -1,0 +1,40 @@
+# config.yaml
+model:
+  in_channels: 3
+  out_channels: 3
+  features: 64
+  num_residual_blocks: 6
+
+training:
+  epochs: 100
+  batch_size: 16
+  lr_g: 0.0002
+  lr_d: 0.0001
+  beta1: 0.5
+  beta2: 0.999
+  
+  # Пути к данным
+  train_low_res_dir: 'data/train/low'
+  train_high_res_dir: 'data/train/high'
+  val_low_res_dir: 'data/val/low'
+  val_high_res_dir: 'data/val/high'
+  
+  # Настройки сохранения
+  checkpoint_dir: 'checkpoints'
+  log_dir: 'runs'
+  save_every: 10
+  
+data:
+  image_size: 256
+  augmentations:
+    horizontal_flip: true
+    rotation: true
+    color_jitter: true
+    noise: true
+    blur: true
+    
+inference:
+  device: 'cuda'  # or 'cpu'
+  model_path: 'checkpoints/best_model.pth'
+  output_format: 'png'
+  quality: 95
