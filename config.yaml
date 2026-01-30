@@ -34,7 +34,7 @@ data:
     blur: true
     
 inference:
-  device: 'cuda'  # or 'cpu'
+  device: 'cuda'
   model_path: 'checkpoints/best_model.pth'
   output_format: 'png'
   quality: 95
