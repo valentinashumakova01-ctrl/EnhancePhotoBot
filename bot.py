@@ -39,13 +39,13 @@ logger = logging.getLogger(__name__)
 # Инициализация бота
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 
-# Импорт утилит из нашего проекта
+# Импорт утилит из проекта
 try:
     sys.path.append(str(Path(__file__).parent))
     from utils.image_processing import load_image, save_image
     from utils.model_loader import enhance_image, classify_image
     from config.settings import IMAGE_SETTINGS
-    logger.info("Утилиты успешно импортированы")
+    logger.info("Утилиты импортированы")
 except ImportError as e:
     logger.warning(f"Не удалось импортировать утилиты: {e}")
     # Запасные функции
@@ -107,10 +107,8 @@ def create_keyboard():
     
     btn1 = types.KeyboardButton('🖼️ Улучшить качество')
     btn2 = types.KeyboardButton('📋 Инструкция')
-    btn3 = types.KeyboardButton('⚙️ Настройки')
-    btn4 = types.KeyboardButton('📊 Статистика')
     
-    markup.add(btn1, btn2, btn3, btn4)
+    markup.add(btn1, btn2)
     return markup
 
 def create_enhancement_keyboard():
@@ -121,10 +119,7 @@ def create_enhancement_keyboard():
     
     buttons = [
         types.InlineKeyboardButton('🎭 Портрет', callback_data='enhance_portrait'),
-        types.InlineKeyboardButton('🌄 Пейзаж', callback_data='enhance_landscape'),
-        types.InlineKeyboardButton('📄 Текст', callback_data='enhance_text'),
-        types.InlineKeyboardButton('🏛️ Архитектура', callback_data='enhance_architecture'),
-        types.InlineKeyboardButton('🤖 Авто', callback_data='enhance_auto'),
+        types.InlineKeyboardButton('🌄 Пейзаж', callback_data='enhance_landscape')
     ]
     
     markup.add(*buttons)
@@ -144,9 +139,8 @@ def send_welcome(message):
 Я - бот для улучшения качества фотографий с помощью нейросетей.
 
 ✨ <b>Что я умею:</b>
-• Улучшать качество любых фотографий
+• Улучшать качество фотографий
 • Увеличивать разрешение в 2-4 раза
-• Убирать шумы и артефакты
 • Улучшать детализацию
 
 📤 <b>Как использовать:</b>
@@ -155,61 +149,16 @@ def send_welcome(message):
 3. Получите результат!
 
 🎯 <b>Поддерживаемые форматы:</b> JPG, PNG, BMP, WebP
-📏 <b>Макс. размер:</b> 20MB
+📏 <b>Макс. размер:</b> 80MB
 
 <b>Команды:</b>
 /start - начать работу
 /help - помощь
-/stats - статистика
-/settings - настройки
 
-Просто отправьте мне фотографию! 📸
+Просто отправьте мне фотографию!
     """
     
     bot.reply_to(message, welcome_text, reply_markup=create_keyboard())
-
-@bot.message_handler(commands=['stats'])
-def send_stats(message):
-    """Статистика бота (только для админов)"""
-    user_id = message.from_user.id
-    
-    if user_id in ADMIN_IDS:
-        stats_text = """
-📊 <b>Статистика бота:</b>
-
-👥 Всего пользователей: [не реализовано]
-🖼️ Обработано фото: [не реализовано]
-⏱️ Среднее время обработки: [не реализовано]
-
-💾 Использование памяти: [не реализовано]
-        """
-        bot.reply_to(message, stats_text)
-    else:
-        bot.reply_to(message, "❌ Эта команда доступна только администраторам.")
-
-@bot.message_handler(commands=['settings'])
-def send_settings(message):
-    """Настройки бота"""
-    settings_text = """
-⚙️ <b>Настройки бота:</b>
-
-• Качество выходного изображения: Высокое
-• Макс. размер файла: 20MB
-• Автоопределение типа: Включено
-• Уведомления: Включены
-
-Используйте кнопки ниже для изменения настроек.
-        """
-    
-    from telebot import types
-    markup = types.InlineKeyboardMarkup()
-    
-    btn1 = types.InlineKeyboardButton('Качество 📊', callback_data='setting_quality')
-    btn2 = types.InlineKeyboardButton('Формат 🖼️', callback_data='setting_format')
-    btn3 = types.InlineKeyboardButton('Автоопределение 🤖', callback_data='setting_auto')
-    
-    markup.add(btn1, btn2, btn3)
-    bot.reply_to(message, settings_text, reply_markup=markup)
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -230,7 +179,7 @@ def handle_photo(message):
         # Проверяем размер файла
         if not enhancer_bot.check_file_size(file_info.file_size or 0):
             bot.edit_message_text(
-                "❌ Файл слишком большой. Максимальный размер: 20MB",
+                "❌ Файл слишком большой. Максимальный размер: 80MB",
                 chat_id=message.chat.id,
                 message_id=status_msg.message_id
             )
@@ -355,14 +304,8 @@ def handle_callback(call):
             
             if enhance_type == 'portrait':
                 enhancement_type = 'портрет'
-            elif enhance_type == 'landscape':
-                enhancement_type = 'пейзаж'
-            elif enhance_type == 'text':
-                enhancement_type = 'текст'
-            elif enhance_type == 'architecture':
-                enhancement_type = 'архитектура'
-            else:  # auto
-                enhancement_type = 'auto'
+            else: 
+                enhance_type == 'landscape'
             
             # Получаем изображение из сессии
             if user_id not in enhancer_bot.user_sessions:
@@ -438,15 +381,12 @@ def handle_text(message):
 2. <b>Выберите тип улучшения:</b>
    • 🎭 <b>Портрет</b> - для лиц и людей
    • 🌄 <b>Пейзаж</b> - для природы и видов
-   • 📄 <b>Текст</b> - для документов и текста
-   • 🏛️ <b>Архитектура</b> - для зданий
-   • 🤖 <b>Авто</b> - автоматический выбор
    
 3. <b>Получите результат:</b> Улучшенное фото будет отправлено вам
 
 💡 <b>Советы:</b>
 • Для лучшего качества отправляйте фото как документ
-• Размер файла не должен превышать 20MB
+• Размер файла не должен превышать 80MB
 • Поддерживаются форматы: JPG, PNG, BMP, WebP
         """
         bot.reply_to(message, instruction_text)
@@ -465,12 +405,10 @@ def handle_text(message):
 
 def main():
     """Основная функция запуска бота"""
-    logger.info("=" * 50)
     logger.info("Запуск бота для улучшения качества фотографий")
     logger.info(f"Токен: {'установлен' if TELEGRAM_TOKEN else 'НЕ УСТАНОВЛЕН!'}")
     logger.info(f"Админы: {ADMIN_IDS}")
     logger.info(f"Макс. размер файла: {MAX_FILE_SIZE / 1024 / 1024:.1f} MB")
-    logger.info("=" * 50)
     
     if not TELEGRAM_TOKEN:
         logger.error("Токен бота не найден! Добавьте TELEGRAM_BOT_TOKEN в .env файл")
