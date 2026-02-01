@@ -1,17 +1,11 @@
 import streamlit as st
 import os
 from pathlib import Path
-import sys
 from PIL import Image
 import io
-import cv2
 import numpy as np
-import torch
-#from basicsr.archs.rrdbnet_arch import RRDBNet
-#from realesrgan import RealESRGANer
 import time
 import requests
-from tqdm import tqdm
 
 # Настройка страницы
 st.set_page_config(
