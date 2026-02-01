@@ -10,6 +10,8 @@ import torch
 from basicsr.archs.rrdbnet_arch import RRDBNet
 from realesrgan import RealESRGANer
 import time
+import requests
+from tqdm import tqdm
 
 # Настройка страницы
 st.set_page_config(
@@ -78,12 +80,111 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         margin: 10px 0;
     }
+    .model-download {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 10px;
+        border-left: 5px solid #28a745;
+        margin: 10px 0;
+    }
+    .download-progress {
+        background: #e9ecef;
+        border-radius: 10px;
+        padding: 10px;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Заголовок
-st.markdown('<h1 class="main-header">✨ AI Photo Enhancer Pro</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Улучшение качества фотографий с помощью нейросетей Real-ESRGAN и кастомных моделей</p>', unsafe_allow_html=True)
+# Функция скачивания моделей
+def download_model_with_progress(url, output_path):
+    """Скачивает модель с прогресс-баром"""
+    try:
+        st.info(f"📥 Начинаю скачивание модели...")
+        
+        # Создаем контейнер для прогресса
+        progress_container = st.empty()
+        status_container = st.empty()
+        
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        
+        if total_size == 0:
+            status_container.warning("Не удалось определить размер файла. Скачиваю...")
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+        else:
+            # Создаем прогресс-бар
+            progress_bar = progress_container.progress(0)
+            status_text = status_container.empty()
+            
+            downloaded = 0
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        downloaded += len(chunk)
+                        f.write(chunk)
+                        
+                        # Обновляем прогресс
+                        progress = downloaded / total_size
+                        progress_bar.progress(progress)
+                        
+                        # Обновляем текст статуса
+                        downloaded_mb = downloaded / (1024 * 1024)
+                        total_mb = total_size / (1024 * 1024)
+                        status_text.text(f"📥 Скачано: {downloaded_mb:.1f}MB / {total_mb:.1f}MB ({progress*100:.1f}%)")
+            
+            # Очищаем контейнеры
+            progress_container.empty()
+            status_container.empty()
+        
+        # Проверяем размер файла
+        file_size = os.path.getsize(output_path) / (1024 * 1024)  # MB
+        if file_size < 10:  # Если файл слишком маленький, вероятно ошибка
+            os.remove(output_path)
+            raise Exception(f"Файл слишком маленький ({file_size:.1f}MB). Возможно ошибка скачивания.")
+        
+        st.success(f"✅ Модель успешно скачана: {output_path.name} ({file_size:.1f}MB)")
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка при скачивании: {str(e)}")
+        # Пробуем удалить битый файл если он существует
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except:
+                pass
+        return False
+
+def check_and_download_models():
+    """Проверяет наличие моделей и предлагает скачать если их нет"""
+    
+    models_to_download = []
+    
+    # Проверяем Real-ESRGAN
+    realesrgan_path = MODELS_DIR / 'RealESRGAN_x4plus.pth'
+    if not realesrgan_path.exists():
+        models_to_download.append({
+            'name': 'Real-ESRGAN_x4plus.pth',
+            'url': 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth',
+            'path': realesrgan_path,
+            'description': 'Модель для улучшения пейзажей (x4 увеличение)'
+        })
+    
+    # Проверяем кастомную модель портретов
+    portrait_path = MODELS_DIR / 'enhanced_epoch_28_ratio_1.23.pth'
+    if not portrait_path.exists():
+        models_to_download.append({
+            'name': 'enhanced_epoch_28_ratio_1.23.pth',
+            'url': None,  # Укажите вашу ссылку если есть
+            'path': portrait_path,
+            'description': 'Кастомная модель для улучшения портретов'
+        })
+    
+    return models_to_download
 
 # Класс для моделей
 class EnhancementModels:
@@ -100,28 +201,41 @@ class EnhancementModels:
             model_path = MODELS_DIR / 'RealESRGAN_x4plus.pth'
             
             if not model_path.exists():
-                st.error(f"Файл модели не найден: {model_path}")
+                st.error(f"❌ Файл модели не найден: {model_path.name}")
+                st.info("Используйте кнопку 'Скачать модели' в сайдбаре")
+                return None
+            
+            # Проверяем размер файла
+            file_size = os.path.getsize(model_path) / (1024 * 1024)  # MB
+            if file_size < 60:  # Real-ESRGAN должен быть около 64MB
+                st.warning(f"⚠️ Файл модели слишком маленький ({file_size:.1f}MB). Возможно он поврежден.")
+                if st.button("🔄 Перескачать модель", key="redownload_realesrgan"):
+                    url = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth'
+                    if download_model_with_progress(url, model_path):
+                        st.rerun()
                 return None
 
-            model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64,
-                           num_block=23, num_grow_ch=32, scale=4)
+            with st.spinner(f"🔄 Загружаю Real-ESRGAN ({file_size:.1f}MB)..."):
+                model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64,
+                               num_block=23, num_grow_ch=32, scale=4)
 
-            upsampler = RealESRGANer(
-                scale=4,
-                model_path=str(model_path),
-                model=model,
-                tile=400,
-                tile_pad=10,
-                pre_pad=0,
-                half=self.device.type != 'cpu',
-                device=self.device
-            )
+                upsampler = RealESRGANer(
+                    scale=4,
+                    model_path=str(model_path),
+                    model=model,
+                    tile=400,
+                    tile_pad=10,
+                    pre_pad=0,
+                    half=self.device.type != 'cpu',
+                    device=self.device
+                )
 
-            self.models['landscape'] = upsampler
-            return upsampler
+                self.models['landscape'] = upsampler
+                st.success(f"✅ Real-ESRGAN загружен (x4 увеличение)")
+                return upsampler
 
         except Exception as e:
-            st.error(f"Ошибка загрузки модели ландшафтов: {e}")
+            st.error(f"❌ Ошибка загрузки модели ландшафтов: {e}")
             return None
 
     def load_portrait_model(self):
@@ -130,9 +244,10 @@ class EnhancementModels:
             model_path = MODELS_DIR / 'enhanced_epoch_28_ratio_1.23.pth'
             
             if not model_path.exists():
-                st.error(f"Файл модели не найден: {model_path}")
+                st.warning("⚠️ Кастомная модель портретов не найдена")
+                st.info("Будет использовано базовое улучшение для портретов")
                 return None
-
+            
             # Определяем архитектуру модели
             class ResidualBlock(torch.nn.Module):
                 def __init__(self, channels):
@@ -172,17 +287,21 @@ class EnhancementModels:
                     x = self.final(x)
                     return identity + 0.3 * x
 
-            checkpoint = torch.load(str(model_path), map_location=self.device)
-            model = StrongGenerator().to(self.device)
-            model.load_state_dict(checkpoint['generator'])
-            model.eval()
-            model.input_size = PORTRAIT_MODEL_SIZE
+            with st.spinner("🔄 Загружаю модель для портретов..."):
+                checkpoint = torch.load(str(model_path), map_location=self.device)
 
-            self.models['portrait'] = model
-            return model
+                model = StrongGenerator().to(self.device)
+                model.load_state_dict(checkpoint['generator'])
+                model.eval()
+                model.input_size = PORTRAIT_MODEL_SIZE
+
+                self.models['portrait'] = model
+                st.success(f"✅ Модель для портретов загружена")
+                st.info(f"Вход модели: {PORTRAIT_MODEL_SIZE[0]}x{PORTRAIT_MODEL_SIZE[1]}, Увеличение: x{PORTRAIT_OUTPUT_SCALE}")
+                return model
 
         except Exception as e:
-            st.error(f"Ошибка загрузки модели портретов: {e}")
+            st.error(f"❌ Ошибка загрузки модели портретов: {e}")
             return None
 
 # Инициализация моделей
@@ -190,14 +309,27 @@ class EnhancementModels:
 def init_models():
     models_manager = EnhancementModels()
     
+    # Проверяем наличие моделей
+    missing_models = check_and_download_models()
+    if missing_models:
+        st.warning(f"⚠️ Отсутствует {len(missing_models)} моделей")
+        return models_manager, False
+    
+    # Загружаем модели
     with st.spinner("🔄 Загружаю модели..."):
         models_manager.load_landscape_model()
         models_manager.load_portrait_model()
     
     loaded = list(models_manager.models.keys())
-    return models_manager, loaded
+    
+    if loaded:
+        st.success(f"✅ Загружено {len(loaded)} моделей")
+        return models_manager, True
+    else:
+        st.warning("⚠️ Не удалось загрузить ни одной модели")
+        return models_manager, False
 
-# Функции обработки изображений
+# Функции обработки изображений (остаются без изменений)
 def prepare_for_portrait_model(img_array: np.ndarray, target_size: tuple = (128, 128)) -> np.ndarray:
     """Подготавливает изображение для портретной модели"""
     h, w = img_array.shape[:2]
@@ -358,6 +490,30 @@ def save_image(image, format='PNG'):
 with st.sidebar:
     st.title("⚙️ Настройки")
     
+    # Проверка моделей
+    st.subheader("🧠 Модели нейросетей")
+    
+    # Кнопка проверки моделей
+    if st.button("🔍 Проверить модели", use_container_width=True):
+        missing_models = check_and_download_models()
+        if missing_models:
+            st.error(f"❌ Отсутствует {len(missing_models)} моделей:")
+            for model in missing_models:
+                st.write(f"• {model['name']} - {model['description']}")
+        else:
+            st.success("✅ Все модели на месте!")
+    
+    # Кнопка скачивания Real-ESRGAN
+    if st.button("📥 Скачать Real-ESRGAN", use_container_width=True):
+        url = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth'
+        output_path = MODELS_DIR / 'RealESRGAN_x4plus.pth'
+        
+        if download_model_with_progress(url, output_path):
+            st.success("✅ Модель скачана успешно!")
+            st.rerun()
+    
+    st.divider()
+    
     st.subheader("Тип улучшения")
     enhancement_type = st.radio(
         "Выберите режим:",
@@ -370,29 +526,84 @@ with st.sidebar:
     st.divider()
     
     # Информация о моделях
-    st.subheader("🧠 Информация о моделях")
+    st.subheader("📊 Информация")
     
-    if 'models_manager' in st.session_state:
-        loaded_models = st.session_state.models_loaded
-        if loaded_models:
-            st.success(f"✅ Загружено моделей: {len(loaded_models)}")
-            for model in loaded_models:
-                if model == 'landscape':
-                    st.info("🌄 Real-ESRGAN (ландшафты, x4 увеличение)")
-                elif model == 'portrait':
-                    st.info(f"🎭 Кастомная модель (портреты, вход: {PORTRAIT_MODEL_SIZE[0]}x{PORTRAIT_MODEL_SIZE[1]}, выход x{PORTRAIT_OUTPUT_SCALE})")
-        else:
-            st.warning("⚠️ Модели не загружены")
+    # Проверяем наличие моделей
+    realesrgan_exists = (MODELS_DIR / 'RealESRGAN_x4plus.pth').exists()
+    portrait_exists = (MODELS_DIR / 'enhanced_epoch_28_ratio_1.23.pth').exists()
+    
+    if realesrgan_exists:
+        file_size = os.path.getsize(MODELS_DIR / 'RealESRGAN_x4plus.pth') / (1024 * 1024)
+        st.success(f"✅ Real-ESRGAN: {file_size:.1f}MB")
+    else:
+        st.error("❌ Real-ESRGAN: отсутствует")
+    
+    if portrait_exists:
+        st.success("✅ Модель портретов: есть")
+    else:
+        st.warning("⚠️ Модель портретов: отсутствует")
     
     st.divider()
     
     # Информация о системе
     st.subheader("💻 Система")
-    if 'device' in st.session_state:
-        device_name = "GPU 🚀" if str(st.session_state.device) == "cuda" else "CPU ⚡"
-        st.write(f"Устройство: {device_name}")
+    device_name = "GPU 🚀" if torch.cuda.is_available() else "CPU ⚡"
+    st.write(f"Устройство: {device_name}")
     
     st.write(f"Макс. размер файла: {MAX_FILE_SIZE_MB}MB")
+
+# Заголовок
+st.markdown('<h1 class="main-header">✨ AI Photo Enhancer Pro</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Улучшение качества фотографий с помощью нейросетей Real-ESRGAN и кастомных моделей</p>', unsafe_allow_html=True)
+
+# Проверяем наличие необходимых моделей
+missing_models = check_and_download_models()
+if missing_models:
+    st.warning("""
+    ⚠️ **Внимание! Не все модели найдены.**
+    
+    Для полноценной работы приложения необходимы:
+    1. **Real-ESRGAN_x4plus.pth** - для улучшения пейзажей
+    2. **enhanced_epoch_28_ratio_1.23.pth** - для улучшения портретов
+    
+    **Что делать:**
+    1. Нажмите кнопку "📥 Скачать Real-ESRGAN" в сайдбаре
+    2. Поместите вашу модель портретов в папку `models/`
+    3. Перезагрузите страницу
+    """)
+    
+    with st.expander("📋 Инструкция по скачиванию моделей", expanded=True):
+        st.markdown("""
+        ### Для Windows:
+        ```bash
+        # Создайте папку models
+        mkdir models
+        
+        # Скачайте Real-ESRGAN
+        curl -L https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -o models/RealESRGAN_x4plus.pth
+        ```
+        
+        ### Для Mac/Linux:
+        ```bash
+        mkdir -p models
+        wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -O models/RealESRGAN_x4plus.pth
+        ```
+        
+        ### Или в Python:
+        ```python
+        import requests
+        import os
+        
+        os.makedirs("models", exist_ok=True)
+        url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+        
+        response = requests.get(url, stream=True)
+        with open("models/RealESRGAN_x4plus.pth", "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        ```
+        """)
 
 # Основной интерфейс
 tab1, tab2, tab3 = st.tabs(["🖼️ Улучшение фото", "📊 Сравнение", "ℹ️ О сервисе"])
@@ -427,11 +638,15 @@ with tab1:
         if st.button("✨ УЛУЧШИТЬ ФОТО", type="primary", use_container_width=True):
             # Инициализация моделей
             if 'models_manager' not in st.session_state:
-                models_manager, loaded = init_models()
+                models_manager, models_loaded = init_models()
                 st.session_state.models_manager = models_manager
-                st.session_state.models_loaded = loaded
+                st.session_state.models_loaded = models_loaded
             else:
                 models_manager = st.session_state.models_manager
+                models_loaded = st.session_state.models_loaded
+            
+            if not models_loaded:
+                st.warning("⚠️ Модели не загружены. Используется базовое улучшение.")
             
             with st.spinner("🧠 ИИ обрабатывает изображение..."):
                 progress_bar = st.progress(0)
@@ -469,6 +684,12 @@ with tab1:
                         elif enhancement_type == 'landscape':
                             st.write(f"**Модель:** Real-ESRGAN")
                             st.write(f"**Увеличение:** ×4")
+                        else:
+                            if models_manager.models:
+                                if len(image.width / image.height) > 1.3:
+                                    st.write(f"**Определено:** Пейзаж (Real-ESRGAN)")
+                                else:
+                                    st.write(f"**Определено:** Портрет (Кастомная модель)")
                     
                     # Кнопка скачивания
                     enhanced_bytes = save_image(enhanced_image, 'PNG')
