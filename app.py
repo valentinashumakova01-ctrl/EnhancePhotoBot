@@ -3,9 +3,20 @@ import torch
 from PIL import Image
 import io
 import os
+import sys
+import subprocess
 from torchvision import transforms
 
-# 1. Классы моделей (копируем из вашего кода)
+# Проверяем и устанавливаем правильную версию numpy
+try:
+    import numpy as np
+    st.success(f"NumPy версия: {np.__version__}")
+except ImportError:
+    st.warning("NumPy не установлен. Устанавливаем...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "numpy<2.0.0"])
+    import numpy as np
+
+# 1. Классы моделей
 class ResidualBlock(torch.nn.Module):
     def __init__(self, channels):
         super().__init__()
@@ -44,60 +55,153 @@ class StrongGenerator(torch.nn.Module):
         x = self.final(x)
         return identity + 0.3 * x
 
-# 2. Функция для загрузки модели
+# 2. Функция для загрузки модели с обработкой ошибок numpy
 @st.cache_resource
 def load_model():
-    # Путь к файлу с весами (относительный путь)
-    weights_path = "models/enhanced_epoch_28_ratio_1.23.pth"
+    # Сначала убедимся, что у нас правильная версия numpy
+    try:
+        import numpy as np
+        np_version = np.__version__
+        st.info(f"NumPy версия: {np_version}")
+        
+        # Если numpy 2.x, нужно установить 1.x
+        if np_version.startswith('2.'):
+            st.warning("Обнаружен NumPy 2.x, который несовместим с некоторыми моделями PyTorch.")
+            st.warning("Устанавливаем NumPy 1.x...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "numpy==1.24.4"])
+            import importlib
+            importlib.reload(np)
     
-    # Проверяем существование файла
-    if not os.path.exists(weights_path):
-        st.error(f"Файл с весами не найден по пути: {weights_path}")
-        st.info("Пожалуйста, убедитесь что файл находится в папке models/")
+    except Exception as e:
+        st.error(f"Ошибка с NumPy: {e}")
+
+    # Путь к файлу с весами
+    weights_paths = [
+        "models/enhanced_epoch_28_ratio_1.23.pth",
+        "./models/enhanced_epoch_28_ratio_1.23.pth",
+        "enhanced_epoch_28_ratio_1.23.pth"
+    ]
+    
+    found_path = None
+    for path in weights_paths:
+        if os.path.exists(path):
+            found_path = path
+            st.success(f"Файл найден: {path}")
+            break
+    
+    if not found_path:
+        st.error("Файл с весами не найден. Искали в:")
+        for path in weights_paths:
+            st.error(f"  - {path}")
+        st.info("Пожалуйста, поместите файл enhanced_epoch_28_ratio_1.23.pth в папку models/")
         return None, None
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    st.info(f"Используется устройство: {'GPU' if device == 'cuda' else 'CPU'}")
     
     try:
-        checkpoint = torch.load(weights_path, 
-                               map_location=device, 
-                               weights_only=False)
+        # Пробуем загрузить с разными параметрами
+        try:
+            checkpoint = torch.load(found_path, 
+                                   map_location=device, 
+                                   weights_only=False)
+        except Exception as e1:
+            st.warning(f"Первая попытка загрузки не удалась: {e1}")
+            st.info("Пробуем альтернативный способ загрузки...")
+            try:
+                # Для старых версий PyTorch
+                checkpoint = torch.load(found_path, 
+                                       map_location=device)
+            except Exception as e2:
+                st.error(f"Вторая попытка загрузки не удалась: {e2}")
+                raise
+        
         model = StrongGenerator().to(device)
-        model.load_state_dict(checkpoint['generator'])
+        
+        # Пробуем разные ключи для загрузки весов
+        if 'generator' in checkpoint:
+            model.load_state_dict(checkpoint['generator'])
+            st.success("Загружен ключ 'generator'")
+        elif 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            st.success("Загружен ключ 'model_state_dict'")
+        elif 'state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['state_dict'])
+            st.success("Загружен ключ 'state_dict'")
+        else:
+            # Пробуем загрузить напрямую
+            try:
+                model.load_state_dict(checkpoint)
+                st.success("Загружены веса напрямую")
+            except:
+                st.error("Не удалось найти подходящие веса в файле")
+                st.info(f"Доступные ключи: {list(checkpoint.keys())}")
+                return None, None
+        
         model.eval()
-        st.success(f"Модель загружена успешно! Устройство: {'GPU' if device == 'cuda' else 'CPU'}")
+        st.success("✅ Модель загружена успешно!")
         return model, device
+        
     except Exception as e:
         st.error(f"Ошибка загрузки модели: {str(e)}")
-        st.info("Возможные причины:")
-        st.info("1. Неправильный формат файла")
-        st.info("2. Несоответствие структуры модели")
-        st.info("3. Файл поврежден")
+        
+        # Подробная информация об ошибке
+        with st.expander("🔍 Подробности ошибки"):
+            st.code(f"""
+Ошибка: {str(e)}
+PyTorch версия: {torch.__version__}
+NumPy версия: {np.__version__ if 'np' in locals() else 'Не загружен'}
+Устройство: {device}
+Путь к файлу: {found_path}
+Размер файла: {os.path.getsize(found_path) / 1024 / 1024:.2f} MB
+            """)
+        
+        # Предложения по решению
+        st.info("💡 Возможные решения:")
+        st.info("1. Установите NumPy версии 1.x: `pip install numpy==1.24.4`")
+        st.info("2. Проверьте совместимость версий PyTorch")
+        st.info("3. Убедитесь, что файл весов не поврежден")
+        
+        # Кнопка для установки правильной версии numpy
+        if st.button("🔄 Установить NumPy 1.24.4"):
+            with st.spinner("Устанавливаем NumPy 1.24.4..."):
+                try:
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", "numpy==1.24.4"])
+                    st.success("NumPy установлен! Перезагрузите страницу.")
+                    st.rerun()
+                except Exception as install_error:
+                    st.error(f"Ошибка установки: {install_error}")
+        
         return None, None
 
 # 3. Функция для обработки изображения
 def enhance_image(image, model, device):
-    # Преобразования
-    transform = transforms.Compose([
-        transforms.Resize((128, 128)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-    ])
-    
-    # Подготовка входного тензора
-    input_tensor = transform(image).unsqueeze(0).to(device)
-    
-    # Обработка
-    with torch.no_grad():
-        output_tensor = model(input_tensor)
-    
-    # Конвертация обратно в изображение
-    output_tensor = output_tensor.squeeze(0).cpu()
-    output_img = output_tensor * 0.5 + 0.5
-    output_img = torch.clamp(output_img, 0, 1)
-    output_img = transforms.ToPILImage()(output_img)
-    
-    return output_img
+    try:
+        # Преобразования
+        transform = transforms.Compose([
+            transforms.Resize((128, 128)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        ])
+        
+        # Подготовка входного тензора
+        input_tensor = transform(image).unsqueeze(0).to(device)
+        
+        # Обработка
+        with torch.no_grad():
+            output_tensor = model(input_tensor)
+        
+        # Конвертация обратно в изображение
+        output_tensor = output_tensor.squeeze(0).cpu()
+        output_img = output_tensor * 0.5 + 0.5
+        output_img = torch.clamp(output_img, 0, 1)
+        output_img = transforms.ToPILImage()(output_img)
+        
+        return output_img
+        
+    except Exception as e:
+        st.error(f"Ошибка обработки изображения: {str(e)}")
+        raise
 
 # 4. Интерфейс Streamlit
 st.set_page_config(
@@ -107,205 +211,191 @@ st.set_page_config(
 )
 
 st.title("🖼️ Улучшение качества изображений")
-st.write("Загрузите изображение для улучшения качества с помощью нейросети")
+st.markdown("---")
 
-# Боковая панель
-with st.sidebar:
-    st.header("⚙️ Настройки")
-    
-    # Информация о модели
-    st.subheader("Информация о модели")
-    st.info(f"Устройство: {'GPU доступен' if torch.cuda.is_available() else 'Только CPU'}")
-    
-    # Размер изображения
-    st.subheader("Параметры обработки")
-    show_original_size = st.checkbox("Показать оригинальный размер", value=True)
-    
-    # Кэширование
-    st.subheader("Производительность")
-    use_cache = st.checkbox("Использовать кэширование", value=True)
-    
-    st.markdown("---")
-    st.caption("Приложение использует архитектуру с остаточными блоками")
+# Информация о системе
+col_sys1, col_sys2, col_sys3 = st.columns(3)
+with col_sys1:
+    st.info(f"PyTorch: {torch.__version__}")
+with col_sys2:
+    try:
+        import numpy as np
+        st.info(f"NumPy: {np.__version__}")
+    except:
+        st.warning("NumPy: Не загружен")
+with col_sys3:
+    st.info(f"Устройство: {'GPU 🚀' if torch.cuda.is_available() else 'CPU ⚙️'}")
 
-# Основная область
+# Загрузка модели
+with st.spinner("Загружаем модель..."):
+    model, device = load_model()
+
+if model is None:
+    st.stop()
+
+# Основной интерфейс
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    # Загрузка модели
-    model, device = load_model()
+    st.subheader("📤 Загрузите изображение")
     
-    if model is None:
-        st.stop()
+    uploaded_file = st.file_uploader(
+        "Выберите изображение", 
+        type=['png', 'jpg', 'jpeg', 'bmp', 'webp'],
+        help="Поддерживаются форматы: PNG, JPG, JPEG, BMP, WEBP",
+        label_visibility="collapsed"
+    )
     
-    # Загрузка изображения
-    st.subheader("📤 Загрузка изображения")
-    
-    # Два способа загрузки
-    tab1, tab2 = st.tabs(["Файл", "URL"])
-    
-    image = None
-    
-    with tab1:
-        uploaded_file = st.file_uploader(
-            "Выберите файл", 
-            type=['png', 'jpg', 'jpeg', 'bmp', 'webp'],
-            help="Поддерживаются форматы: PNG, JPG, JPEG, BMP, WEBP",
-            label_visibility="collapsed"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                image = Image.open(uploaded_file).convert('RGB')
-                st.success(f"Изображение загружено: {image.size[0]}x{image.size[1]} пикселей")
-            except Exception as e:
-                st.error(f"Ошибка открытия файла: {e}")
-    
-    with tab2:
-        url = st.text_input("Введите URL изображения", placeholder="https://example.com/image.jpg")
-        if url:
-            try:
-                import requests
-                from io import BytesIO
-                
-                response = requests.get(url)
-                image = Image.open(BytesIO(response.content)).convert('RGB')
-                st.success(f"Изображение загружено: {image.size[0]}x{image.size[1]} пикселей")
-            except Exception as e:
-                st.error(f"Ошибка загрузки по URL: {e}")
+    if uploaded_file:
+        try:
+            image = Image.open(uploaded_file).convert('RGB')
+            st.success(f"✅ Изображение загружено: {image.size[0]}x{image.size[1]} пикселей")
+        except Exception as e:
+            st.error(f"❌ Ошибка открытия файла: {e}")
+            image = None
+    else:
+        image = None
+        st.info("👆 Загрузите изображение выше")
 
 with col2:
-    if image is not None:
+    if image:
         st.subheader("👁️ Предпросмотр")
-        if show_original_size:
-            st.image(image, caption="Оригинальное изображение", use_column_width=True)
+        # Показываем миниатюру
+        max_size = 300
+        if image.width > max_size or image.height > max_size:
+            ratio = min(max_size / image.width, max_size / image.height)
+            new_size = (int(image.width * ratio), int(image.height * ratio))
+            preview = image.resize(new_size, Image.Resampling.LANCZOS)
+            st.image(preview, caption=f"Предпросмотр ({new_size[0]}x{new_size[1]})")
         else:
-            # Показываем уменьшенную версию
-            preview_size = min(300, image.size[0], image.size[1])
-            st.image(image.resize((preview_size, preview_size)), 
-                    caption=f"Предпросмотр ({preview_size}x{preview_size})")
+            st.image(image, caption=f"Оригинал ({image.width}x{image.height})")
 
-# Обработка изображения
-if image is not None:
+# Обработка
+if image and model:
     st.markdown("---")
     
-    col_left, col_center, col_right = st.columns([1, 2, 1])
-    
-    with col_center:
-        if st.button("✨ Улучшить качество", type="primary", use_container_width=True):
-            with st.spinner("Обрабатываем изображение... Это может занять несколько секунд"):
-                try:
-                    # Улучшаем изображение
-                    enhanced = enhance_image(image, model, device)
-                    
-                    # Показываем результаты
-                    st.subheader("📊 Результаты")
-                    
-                    # Две колонки для сравнения
-                    col_before, col_after = st.columns(2)
-                    
-                    with col_before:
-                        st.image(image.resize((256, 256)), 
-                                caption="Оригинал (128x128)", 
-                                use_column_width=True)
-                    
-                    with col_after:
-                        st.image(enhanced, 
-                                caption="Улучшенная версия", 
-                                use_column_width=True)
-                    
-                    # Статистика
-                    st.subheader("📈 Статистика")
-                    
-                    col_stat1, col_stat2, col_stat3 = st.columns(3)
-                    
-                    with col_stat1:
-                        st.metric("Размер оригинала", f"{image.size[0]}x{image.size[1]}")
-                    
-                    with col_stat2:
-                        st.metric("Размер после обработки", "128x128")
-                    
-                    with col_stat3:
-                        st.metric("Устройство", "GPU" if device == 'cuda' else "CPU")
-                    
-                    # Кнопка для скачивания результата
-                    st.subheader("💾 Скачать результат")
-                    
-                    # Формат для скачивания
+    if st.button("✨ УЛУЧШИТЬ КАЧЕСТВО", type="primary", use_container_width=True):
+        with st.spinner("Обрабатываем изображение..."):
+            try:
+                # Прогресс бар
+                progress_bar = st.progress(0)
+                
+                # Шаг 1: Подготовка
+                progress_bar.progress(20)
+                st.info("🔧 Подготавливаем изображение...")
+                
+                # Шаг 2: Обработка
+                progress_bar.progress(60)
+                st.info("🔄 Обрабатываем нейросетью...")
+                enhanced = enhance_image(image, model, device)
+                
+                # Шаг 3: Завершение
+                progress_bar.progress(100)
+                st.success("✅ Обработка завершена!")
+                
+                # Результаты
+                st.subheader("📊 Результаты")
+                
+                # Сравнение
+                col_before, col_after = st.columns(2)
+                
+                with col_before:
+                    st.image(image.resize((256, 256)), 
+                            caption="Оригинал", 
+                            use_column_width=True)
+                
+                with col_after:
+                    st.image(enhanced, 
+                            caption="Улучшенная версия", 
+                            use_column_width=True)
+                
+                # Скачивание
+                st.subheader("💾 Скачать результат")
+                
+                format_col1, format_col2 = st.columns([2, 1])
+                
+                with format_col1:
                     format_option = st.selectbox(
-                        "Формат файла",
-                        ["PNG", "JPEG", "BMP"]
+                        "Формат",
+                        ["PNG", "JPEG", "WEBP"]
                     )
-                    
-                    # Качество для JPEG
+                
+                with format_col2:
                     quality = 95
-                    if format_option == "JPEG":
-                        quality = st.slider("Качество JPEG", 1, 100, 95)
-                    
-                    # Конвертация в выбранный формат
-                    buf = io.BytesIO()
-                    if format_option == "PNG":
-                        enhanced.save(buf, format="PNG", optimize=True)
-                        mime_type = "image/png"
-                        file_ext = "png"
-                    elif format_option == "JPEG":
-                        enhanced.save(buf, format="JPEG", quality=quality, optimize=True)
-                        mime_type = "image/jpeg"
-                        file_ext = "jpg"
-                    else:  # BMP
-                        enhanced.save(buf, format="BMP")
-                        mime_type = "image/bmp"
-                        file_ext = "bmp"
-                    
-                    byte_im = buf.getvalue()
-                    
-                    col_dl1, col_dl2 = st.columns(2)
-                    
-                    with col_dl1:
-                        st.download_button(
-                            label=f"Скачать как {format_option}",
-                            data=byte_im,
-                            file_name=f"enhanced_image.{file_ext}",
-                            mime=mime_type,
-                            use_container_width=True
-                        )
-                    
-                    with col_dl2:
-                        # Также можно скачать оригинал
-                        buf_orig = io.BytesIO()
-                        image.save(buf_orig, format="PNG")
-                        st.download_button(
-                            label="Скачать оригинал",
-                            data=buf_orig.getvalue(),
-                            file_name="original_image.png",
-                            mime="image/png",
-                            use_container_width=True
-                        )
-                    
-                except Exception as e:
-                    st.error(f"Ошибка при обработке: {str(e)}")
-                    st.info("Попробуйте:")
-                    st.info("1. Изображение меньшего размера")
-                    st.info("2. Другой формат файла")
-                    st.info("3. Проверить подключение к GPU")
+                    if format_option != "PNG":
+                        quality = st.slider("Качество", 1, 100, 95)
+                
+                # Подготовка файла
+                buf = io.BytesIO()
+                if format_option == "PNG":
+                    enhanced.save(buf, format="PNG", optimize=True)
+                    mime_type = "image/png"
+                    file_ext = "png"
+                elif format_option == "JPEG":
+                    enhanced.save(buf, format="JPEG", quality=quality, optimize=True)
+                    mime_type = "image/jpeg"
+                    file_ext = "jpg"
+                else:  # WEBP
+                    enhanced.save(buf, format="WEBP", quality=quality)
+                    mime_type = "image/webp"
+                    file_ext = "webp"
+                
+                byte_im = buf.getvalue()
+                
+                # Кнопки скачивания
+                col_dl1, col_dl2, col_dl3 = st.columns(3)
+                
+                with col_dl1:
+                    st.download_button(
+                        label=f"📥 {format_option}",
+                        data=byte_im,
+                        file_name=f"enhanced.{file_ext}",
+                        mime=mime_type,
+                        use_container_width=True
+                    )
+                
+                with col_dl2:
+                    # Оригинал
+                    buf_orig = io.BytesIO()
+                    image.save(buf_orig, format="PNG")
+                    st.download_button(
+                        label="📥 Оригинал",
+                        data=buf_orig.getvalue(),
+                        file_name="original.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
+                
+                with col_dl3:
+                    # Оба изображения
+                    if st.button("🔄 Обработать еще", use_container_width=True):
+                        st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Ошибка: {str(e)}")
 
-# Информация для разработчика
-with st.expander("🔧 Информация для разработчика"):
-    st.code("""
-Структура проекта:
-your_project/
-├── app.py              # Этот файл
-├── models/
-│   └── enhanced_epoch_28_ratio_1.23.pth
-├── requirements.txt
-└── README.md
-""", language="bash")
+# Информация
+with st.expander("ℹ️ Информация о приложении"):
+    st.markdown("""
+    ### 📝 Описание
+    Это приложение использует нейросеть для улучшения качества изображений.
     
-    if model is not None:
-        st.write("Параметры модели:")
-        total_params = sum(p.numel() for p in model.parameters())
-        st.write(f"Всего параметров: {total_params:,}")
+    ### 🛠 Технические детали
+    - **Модель**: StrongGenerator с остаточными блоками
+    - **Архитектура**: 6 Residual Blocks, 128 каналов
+    - **Входной размер**: 128×128 пикселей
+    - **Форматы**: PNG, JPG, JPEG, BMP, WEBP
+    
+    ### ⚠️ Ограничения
+    - Изображения автоматически изменяются до 128×128
+    - Обработка на CPU может быть медленной
+    - Рекомендуется использовать изображения до 5MB
+    """)
 
 # Футер
 st.markdown("---")
-st.caption("🎯 Улучшение качества изображений | PyTorch + Streamlit | Веса модели в папке models/")
+st.caption("🎯 Улучшение качества изображений | PyTorch + Streamlit | [Папка models/]")
+
+# Кнопка для решения проблем
+if st.button("🔄 Перезагрузить приложение"):
+    st.rerun()
