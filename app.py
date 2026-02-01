@@ -201,9 +201,16 @@ class EnhancementModels:
             model_path = MODELS_DIR / 'RealESRGAN_x4plus.pth'
             
             if not model_path.exists():
-                st.error(f"❌ Файл модели не найден: {model_path.name}")
-                st.info("Используйте кнопку 'Скачать модели' в сайдбаре")
+                st.warning("Real-ESRGAN модель не найдена")
                 return None
+        
+        # Вместо Real-ESRGAN используем альтернативу
+        st.warning("Real-ESRGAN временно недоступен. Используется альтернативное улучшение.")
+        return None
+        
+    except Exception as e:
+        st.error(f"Ошибка загрузки модели ландшафтов: {e}")
+        return None
             
             # Проверяем размер файла
             file_size = os.path.getsize(model_path) / (1024 * 1024)  # MB
@@ -438,46 +445,28 @@ def enhance_image_basic(img_array: np.ndarray, scale: int = 2, sharpness: float 
         return Image.fromarray(enhanced)
 
 def enhance_image_advanced(image: Image.Image, models_manager, enhancement_type: str = 'auto') -> Image.Image:
-    """Улучшение изображения с использованием продвинутых моделей"""
+    """Улучшение изображения"""
     try:
         img_array = np.array(image)
-
+        
+        # Всегда используем базовое улучшение
+        st.info("Используется базовое улучшение (Real-ESRGAN временно недоступен)")
+        
         if enhancement_type == 'landscape':
-            model = models_manager.models.get('landscape')
-            if model is not None:
-                output, _ = model.enhance(img_array, outscale=4)
-                return Image.fromarray(output)
-            else:
-                return enhance_image_basic(img_array, scale=4, sharpness=1.5)
-
+            return enhance_image_basic(img_array, scale=4, sharpness=1.5)
         elif enhancement_type == 'portrait':
-            model = models_manager.models.get('portrait')
-            if model is not None:
-                output = enhance_portrait_model_inference(model, img_array)
-                return Image.fromarray(output)
-            else:
-                return enhance_image_basic(img_array, scale=2, sharpness=1.2)
-
+            return enhance_image_basic(img_array, scale=2, sharpness=1.2)
         else:  # auto
             height, width = img_array.shape[:2]
             aspect_ratio = width / height
-
-            if aspect_ratio > 1.3:
-                model = models_manager.models.get('landscape')
-            else:
-                model = models_manager.models.get('portrait')
-
-            if model is not None:
-                if model == models_manager.models.get('landscape'):
-                    output, _ = model.enhance(img_array, outscale=4)
-                else:
-                    output = enhance_portrait_model_inference(model, img_array)
-                return Image.fromarray(output)
-            else:
-                return enhance_image_basic(img_array)
-
+            
+            if aspect_ratio > 1.3:  # Широкое - ландшафт
+                return enhance_image_basic(img_array, scale=4, sharpness=1.5)
+            else:  # Вертикальное - портрет
+                return enhance_image_basic(img_array, scale=2, sharpness=1.2)
+                
     except Exception as e:
-        st.error(f"Ошибка в продвинутом улучшении: {e}")
+        st.error(f"Ошибка улучшения: {e}")
         return enhance_image_basic(np.array(image))
 
 def save_image(image, format='PNG'):
