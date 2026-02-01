@@ -7,8 +7,8 @@ import io
 import cv2
 import numpy as np
 import torch
-from basicsr.archs.rrdbnet_arch import RRDBNet
-from realesrgan import RealESRGANer
+#from basicsr.archs.rrdbnet_arch import RRDBNet
+#from realesrgan import RealESRGANer
 import time
 import requests
 from tqdm import tqdm
