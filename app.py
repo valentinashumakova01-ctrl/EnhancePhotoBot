@@ -46,20 +46,6 @@ st.markdown("""
         color: #666;
         margin-bottom: 2rem;
     }
-    .status-card {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        padding: 20px;
-        border-radius: 15px;
-        color: white;
-        margin: 10px 0;
-    }
-    .enhance-card {
-        background: rgba(255, 255, 255, 0.1);
-        padding: 20px;
-        border-radius: 15px;
-        margin: 10px 0;
-        border-left: 5px solid #667eea;
-    }
     .stButton > button {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -68,184 +54,74 @@ st.markdown("""
         border-radius: 25px;
         font-weight: bold;
         font-size: 1.1rem;
-        transition: all 0.3s;
     }
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-    }
-    .image-container {
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        margin: 10px 0;
-    }
-    .model-download {
-        background: #f8f9fa;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid #28a745;
-        margin: 10px 0;
-    }
-    .download-progress {
-        background: #e9ecef;
-        border-radius: 10px;
+    .model-status {
         padding: 10px;
-        margin: 10px 0;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    .model-loaded {
+        background: #d4edda;
+        border-left: 4px solid #28a745;
+    }
+    .model-missing {
+        background: #f8d7da;
+        border-left: 4px solid #dc3545;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Функция скачивания моделей
-def download_model_with_progress(url, output_path):
-    """Скачивает модель с прогресс-баром"""
-    try:
-        st.info(f"📥 Начинаю скачивание модели...")
-        
-        # Создаем контейнер для прогресса
-        progress_container = st.empty()
-        status_container = st.empty()
-        
-        response = requests.get(url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        
-        if total_size == 0:
-            status_container.warning("Не удалось определить размер файла. Скачиваю...")
-            with open(output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-        else:
-            # Создаем прогресс-бар
-            progress_bar = progress_container.progress(0)
-            status_text = status_container.empty()
-            
-            downloaded = 0
-            with open(output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        downloaded += len(chunk)
-                        f.write(chunk)
-                        
-                        # Обновляем прогресс
-                        progress = downloaded / total_size
-                        progress_bar.progress(progress)
-                        
-                        # Обновляем текст статуса
-                        downloaded_mb = downloaded / (1024 * 1024)
-                        total_mb = total_size / (1024 * 1024)
-                        status_text.text(f"📥 Скачано: {downloaded_mb:.1f}MB / {total_mb:.1f}MB ({progress*100:.1f}%)")
-            
-            # Очищаем контейнеры
-            progress_container.empty()
-            status_container.empty()
-        
-        # Проверяем размер файла
-        file_size = os.path.getsize(output_path) / (1024 * 1024)  # MB
-        if file_size < 10:  # Если файл слишком маленький, вероятно ошибка
-            os.remove(output_path)
-            raise Exception(f"Файл слишком маленький ({file_size:.1f}MB). Возможно ошибка скачивания.")
-        
-        st.success(f"✅ Модель успешно скачана: {output_path.name} ({file_size:.1f}MB)")
-        return True
-        
-    except Exception as e:
-        st.error(f"❌ Ошибка при скачивании: {str(e)}")
-        # Пробуем удалить битый файл если он существует
-        if os.path.exists(output_path):
-            try:
-                os.remove(output_path)
-            except:
-                pass
-        return False
+# Заголовок
+st.markdown('<h1 class="main-header">✨ AI Photo Enhancer Pro</h1>', unsafe_allow_html=True)
 
-def check_and_download_models():
-    """Проверяет наличие моделей и предлагает скачать если их нет"""
-    
-    models_to_download = []
-    
-    # Проверяем Real-ESRGAN
-    realesrgan_path = MODELS_DIR / 'RealESRGAN_x4plus.pth'
-    if not realesrgan_path.exists():
-        models_to_download.append({
-            'name': 'Real-ESRGAN_x4plus.pth',
-            'url': 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth',
-            'path': realesrgan_path,
-            'description': 'Модель для улучшения пейзажей (x4 увеличение)'
-        })
-    
-    # Проверяем кастомную модель портретов
-    portrait_path = MODELS_DIR / 'enhanced_epoch_28_ratio_1.23.pth'
-    if not portrait_path.exists():
-        models_to_download.append({
-            'name': 'enhanced_epoch_28_ratio_1.23.pth',
-            'url': None,  # Укажите вашу ссылку если есть
-            'path': portrait_path,
-            'description': 'Кастомная модель для улучшения портретов'
-        })
-    
-    return models_to_download
-
-# Класс для моделей
+# ================== КЛАСС ДЛЯ МОДЕЛЕЙ ==================
 class EnhancementModels:
     """Класс для загрузки и управления моделями улучшения"""
-
+    
     def __init__(self):
         self.models = {}
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         st.session_state['device'] = self.device
-
+    
     def load_landscape_model(self):
-        """Загрузка модели для улучшения ландшафтов"""
+        """Загрузка модели Real-ESRGAN для ландшафтов"""
         try:
             model_path = MODELS_DIR / 'RealESRGAN_x4plus.pth'
             
             if not model_path.exists():
-                st.error(f"❌ Файл модели не найден: {model_path.name}")
-                st.info("Используйте кнопку 'Скачать модели' в сайдбаре")
                 return None
             
             # Проверяем размер файла
-            file_size = os.path.getsize(model_path) / (1024 * 1024)  # MB
-            if file_size < 60:  # Real-ESRGAN должен быть около 64MB
-                st.warning(f"⚠️ Файл модели слишком маленький ({file_size:.1f}MB). Возможно он поврежден.")
-                if st.button("🔄 Перескачать модель", key="redownload_realesrgan"):
-                    url = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth'
-                    if download_model_with_progress(url, model_path):
-                        st.rerun()
+            file_size = os.path.getsize(model_path) / (1024 * 1024)
+            if file_size < 60:
                 return None
-
-            with st.spinner(f"🔄 Загружаю Real-ESRGAN ({file_size:.1f}MB)..."):
-                model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64,
-                               num_block=23, num_grow_ch=32, scale=4)
-
-                upsampler = RealESRGANer(
-                    scale=4,
-                    model_path=str(model_path),
-                    model=model,
-                    tile=400,
-                    tile_pad=10,
-                    pre_pad=0,
-                    half=self.device.type != 'cpu',
-                    device=self.device
-                )
-
-                self.models['landscape'] = upsampler
-                st.success(f"✅ Real-ESRGAN загружен (x4 увеличение)")
-                return upsampler
-
+            
+            model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64,
+                           num_block=23, num_grow_ch=32, scale=4)
+            
+            upsampler = RealESRGANer(
+                scale=4,
+                model_path=str(model_path),
+                model=model,
+                tile=400,
+                tile_pad=10,
+                pre_pad=0,
+                half=self.device.type != 'cpu',
+                device=self.device
+            )
+            
+            self.models['landscape'] = upsampler
+            return upsampler
+            
         except Exception as e:
-            st.error(f"❌ Ошибка загрузки модели ландшафтов: {e}")
             return None
-
+    
     def load_portrait_model(self):
-        """Загрузка модели для улучшения портретов"""
+        """Загрузка кастомной модели для портретов"""
         try:
             model_path = MODELS_DIR / 'enhanced_epoch_28_ratio_1.23.pth'
             
             if not model_path.exists():
-                st.warning("⚠️ Кастомная модель портретов не найдена")
-                st.info("Будет использовано базовое улучшение для портретов")
                 return None
             
             # Определяем архитектуру модели
@@ -259,7 +135,7 @@ class EnhancementModels:
                     )
                 def forward(self, x):
                     return x + self.block(x)
-
+            
             class StrongGenerator(torch.nn.Module):
                 def __init__(self):
                     super().__init__()
@@ -286,54 +162,24 @@ class EnhancementModels:
                     x = self.res_blocks(x)
                     x = self.final(x)
                     return identity + 0.3 * x
-
-            with st.spinner("🔄 Загружаю модель для портретов..."):
-                checkpoint = torch.load(str(model_path), map_location=self.device)
-
-                model = StrongGenerator().to(self.device)
-                model.load_state_dict(checkpoint['generator'])
-                model.eval()
-                model.input_size = PORTRAIT_MODEL_SIZE
-
-                self.models['portrait'] = model
-                st.success(f"✅ Модель для портретов загружена")
-                st.info(f"Вход модели: {PORTRAIT_MODEL_SIZE[0]}x{PORTRAIT_MODEL_SIZE[1]}, Увеличение: x{PORTRAIT_OUTPUT_SCALE}")
-                return model
-
+            
+            checkpoint = torch.load(str(model_path), map_location=self.device)
+            model = StrongGenerator().to(self.device)
+            model.load_state_dict(checkpoint['generator'])
+            model.eval()
+            model.input_size = PORTRAIT_MODEL_SIZE
+            
+            self.models['portrait'] = model
+            return model
+            
         except Exception as e:
-            st.error(f"❌ Ошибка загрузки модели портретов: {e}")
             return None
 
-# Инициализация моделей
-@st.cache_resource
-def init_models():
-    models_manager = EnhancementModels()
-    
-    # Проверяем наличие моделей
-    missing_models = check_and_download_models()
-    if missing_models:
-        st.warning(f"⚠️ Отсутствует {len(missing_models)} моделей")
-        return models_manager, False
-    
-    # Загружаем модели
-    with st.spinner("🔄 Загружаю модели..."):
-        models_manager.load_landscape_model()
-        models_manager.load_portrait_model()
-    
-    loaded = list(models_manager.models.keys())
-    
-    if loaded:
-        st.success(f"✅ Загружено {len(loaded)} моделей")
-        return models_manager, True
-    else:
-        st.warning("⚠️ Не удалось загрузить ни одной модели")
-        return models_manager, False
-
-# Функции обработки изображений (остаются без изменений)
+# ================== ФУНКЦИИ ИНФЕРЕНСА ==================
 def prepare_for_portrait_model(img_array: np.ndarray, target_size: tuple = (128, 128)) -> np.ndarray:
     """Подготавливает изображение для портретной модели"""
     h, w = img_array.shape[:2]
-
+    
     if h > target_size[0] or w > target_size[1]:
         scale = min(target_size[0] / h, target_size[1] / w)
         new_h = int(h * scale)
@@ -344,55 +190,55 @@ def prepare_for_portrait_model(img_array: np.ndarray, target_size: tuple = (128,
         new_h = int(h * scale)
         new_w = int(w * scale)
         resized = cv2.resize(img_array, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-
+    
     if new_h < target_size[0] or new_w < target_size[1]:
         pad_h = target_size[0] - new_h
         pad_w = target_size[1] - new_w
-
+        
         pad_top = pad_h // 2
         pad_bottom = pad_h - pad_top
         pad_left = pad_w // 2
         pad_right = pad_w - pad_left
-
+        
         resized = cv2.copyMakeBorder(resized,
                                     pad_top, pad_bottom,
                                     pad_left, pad_right,
                                     cv2.BORDER_REFLECT)
-
+    
     return resized
 
-def enhance_portrait_model_inference(model, img_array: np.ndarray) -> np.ndarray:
-    """Инференс для портретной модели"""
+def run_portrait_model_inference(model, img_array: np.ndarray) -> np.ndarray:
+    """Запускает инференс портретной модели"""
     try:
         original_h, original_w = img_array.shape[:2]
         img_prepared = prepare_for_portrait_model(img_array, PORTRAIT_MODEL_SIZE)
-
+        
         img_tensor = torch.from_numpy(img_prepared).permute(2, 0, 1).float() / 255.0
         img_tensor = img_tensor.unsqueeze(0).to(model.device)
-
+        
         with torch.no_grad():
             output_tensor = model(img_tensor)
-
+        
         output_tensor = output_tensor.squeeze(0).permute(1, 2, 0)
         output = (output_tensor.cpu().numpy() * 255.0).astype(np.uint8)
-
+        
         h, w = output.shape[:2]
         target_h, target_w = PORTRAIT_MODEL_SIZE
         pad_h = h - target_h
         pad_w = w - target_w
-
+        
         if pad_h > 0 or pad_w > 0:
             start_h = pad_h // 2 if pad_h > 0 else 0
             start_w = pad_w // 2 if pad_w > 0 else 0
             end_h = h - (pad_h - start_h) if pad_h > 0 else h
             end_w = w - (pad_w - start_w) if pad_w > 0 else w
             output = output[start_h:end_h, start_w:end_w]
-
+        
         if PORTRAIT_OUTPUT_SCALE > 1:
             scaled_h = output.shape[0] * PORTRAIT_OUTPUT_SCALE
             scaled_w = output.shape[1] * PORTRAIT_OUTPUT_SCALE
             output = cv2.resize(output, (scaled_w, scaled_h), interpolation=cv2.INTER_CUBIC)
-
+        
         result_h, result_w = output.shape[:2]
         if result_h < original_h and result_w < original_w:
             scale_h = original_h / result_h
@@ -402,266 +248,209 @@ def enhance_portrait_model_inference(model, img_array: np.ndarray) -> np.ndarray
                 new_h = int(result_h * scale)
                 new_w = int(result_w * scale)
                 output = cv2.resize(output, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-
+        
         return output
-
+        
     except Exception as e:
-        st.error(f"Ошибка в портретной модели: {e}")
-        raise
+        raise Exception(f"Ошибка в портретной модели: {e}")
 
-def enhance_image_basic(img_array: np.ndarray, scale: int = 2, sharpness: float = 1.3) -> Image.Image:
-    """Базовое улучшение изображения (fallback)"""
+def run_landscape_model_inference(model, img_array: np.ndarray) -> np.ndarray:
+    """Запускает инференс ландшафтной модели (Real-ESRGAN)"""
     try:
-        h, w = img_array.shape[:2]
-        enhanced = cv2.resize(img_array, (w * scale, h * scale),
-                             interpolation=cv2.INTER_CUBIC)
-
-        if sharpness > 1.0:
-            gaussian = cv2.GaussianBlur(enhanced, (0, 0), 3)
-            enhanced = cv2.addWeighted(enhanced, sharpness, gaussian, 1 - sharpness, 0)
-
-        lab = cv2.cvtColor(enhanced, cv2.COLOR_RGB2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        l = clahe.apply(l)
-        enhanced = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2RGB)
-
-        enhanced = cv2.fastNlMeansDenoisingColored(enhanced, None, 5, 5, 7, 21)
-
-        return Image.fromarray(enhanced)
-
+        output, _ = model.enhance(img_array, outscale=4)
+        return output
     except Exception as e:
-        st.error(f"Ошибка в базовом улучшении: {e}")
-        h, w = img_array.shape[:2]
-        enhanced = cv2.resize(img_array, (w * scale, h * scale),
-                             interpolation=cv2.INTER_LINEAR)
-        return Image.fromarray(enhanced)
+        raise Exception(f"Ошибка в ландшафтной модели: {e}")
 
-def enhance_image_advanced(image: Image.Image, models_manager, enhancement_type: str = 'auto') -> Image.Image:
-    """Улучшение изображения с использованием продвинутых моделей"""
-    try:
-        img_array = np.array(image)
-
-        if enhancement_type == 'landscape':
+# ================== ОСНОВНАЯ ФУНКЦИЯ УЛУЧШЕНИЯ ==================
+def enhance_with_model(image: Image.Image, model_type: str, models_manager) -> Image.Image:
+    """Улучшает изображение с помощью выбранной модели"""
+    
+    # Конвертируем PIL в numpy
+    img_array = np.array(image)
+    
+    if model_type == 'portrait':
+        model = models_manager.models.get('portrait')
+        if model is None:
+            raise Exception("Модель для портретов не загружена")
+        
+        # Запускаем инференс
+        output_array = run_portrait_model_inference(model, img_array)
+        return Image.fromarray(output_array)
+    
+    elif model_type == 'landscape':
+        model = models_manager.models.get('landscape')
+        if model is None:
+            raise Exception("Модель для ландшафтов не загружена")
+        
+        # Запускаем инференс
+        output_array = run_landscape_model_inference(model, img_array)
+        return Image.fromarray(output_array)
+    
+    else:  # auto
+        # Автоматическое определение
+        height, width = img_array.shape[:2]
+        aspect_ratio = width / height
+        
+        if aspect_ratio > 1.3:  # Широкое изображение = ландшафт
             model = models_manager.models.get('landscape')
-            if model is not None:
-                output, _ = model.enhance(img_array, outscale=4)
-                return Image.fromarray(output)
-            else:
-                return enhance_image_basic(img_array, scale=4, sharpness=1.5)
-
-        elif enhancement_type == 'portrait':
+            if model is None:
+                raise Exception("Модель для ландшафтов не загружена")
+            output_array = run_landscape_model_inference(model, img_array)
+        else:  # Вертикальное или квадратное = портрет
             model = models_manager.models.get('portrait')
-            if model is not None:
-                output = enhance_portrait_model_inference(model, img_array)
-                return Image.fromarray(output)
-            else:
-                return enhance_image_basic(img_array, scale=2, sharpness=1.2)
+            if model is None:
+                raise Exception("Модель для портретов не загружена")
+            output_array = run_portrait_model_inference(model, img_array)
+        
+        return Image.fromarray(output_array)
 
-        else:  # auto
-            height, width = img_array.shape[:2]
-            aspect_ratio = width / height
-
-            if aspect_ratio > 1.3:
-                model = models_manager.models.get('landscape')
-            else:
-                model = models_manager.models.get('portrait')
-
-            if model is not None:
-                if model == models_manager.models.get('landscape'):
-                    output, _ = model.enhance(img_array, outscale=4)
-                else:
-                    output = enhance_portrait_model_inference(model, img_array)
-                return Image.fromarray(output)
-            else:
-                return enhance_image_basic(img_array)
-
-    except Exception as e:
-        st.error(f"Ошибка в продвинутом улучшении: {e}")
-        return enhance_image_basic(np.array(image))
-
+# ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
 def save_image(image, format='PNG'):
     """Сохраняет изображение в bytes"""
     img_byte_arr = io.BytesIO()
     image.save(img_byte_arr, format=format)
     return img_byte_arr.getvalue()
 
+@st.cache_resource
+def init_models():
+    """Инициализация и загрузка моделей"""
+    models_manager = EnhancementModels()
+    
+    # Загружаем модели
+    with st.spinner("🔄 Загружаю модели..."):
+        landscape_loaded = models_manager.load_landscape_model()
+        portrait_loaded = models_manager.load_portrait_model()
+    
+    loaded_models = []
+    if landscape_loaded:
+        loaded_models.append('landscape')
+    if portrait_loaded:
+        loaded_models.append('portrait')
+    
+    return models_manager, loaded_models
+
+# ================== ИНТЕРФЕЙС ==================
 # Сайдбар
 with st.sidebar:
     st.title("⚙️ Настройки")
     
-    # Проверка моделей
-    st.subheader("🧠 Модели нейросетей")
+    st.subheader("🧠 Модели улучшения")
     
-    # Кнопка проверки моделей
-    if st.button("🔍 Проверить модели", use_container_width=True):
-        missing_models = check_and_download_models()
-        if missing_models:
-            st.error(f"❌ Отсутствует {len(missing_models)} моделей:")
-            for model in missing_models:
-                st.write(f"• {model['name']} - {model['description']}")
-        else:
-            st.success("✅ Все модели на месте!")
+    # Проверяем наличие файлов моделей
+    realesrgan_exists = (MODELS_DIR / 'RealESRGAN_x4plus.pth').exists()
+    portrait_exists = (MODELS_DIR / 'enhanced_epoch_28_ratio_1.23.pth').exists()
     
-    # Кнопка скачивания Real-ESRGAN
-    if st.button("📥 Скачать Real-ESRGAN", use_container_width=True):
-        url = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth'
-        output_path = MODELS_DIR / 'RealESRGAN_x4plus.pth'
-        
-        if download_model_with_progress(url, output_path):
-            st.success("✅ Модель скачана успешно!")
-            st.rerun()
+    if realesrgan_exists:
+        size = os.path.getsize(MODELS_DIR / 'RealESRGAN_x4plus.pth') / (1024 * 1024)
+        st.markdown(f'<div class="model-status model-loaded">✅ Real-ESRGAN: {size:.1f}MB</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="model-status model-missing">❌ Real-ESRGAN: отсутствует</div>', unsafe_allow_html=True)
+    
+    if portrait_exists:
+        size = os.path.getsize(MODELS_DIR / 'enhanced_epoch_28_ratio_1.23.pth') / (1024 * 1024)
+        st.markdown(f'<div class="model-status model-loaded">✅ Модель портретов: {size:.1f}MB</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="model-status model-missing">❌ Модель портретов: отсутствует</div>', unsafe_allow_html=True)
     
     st.divider()
     
     st.subheader("Тип улучшения")
     enhancement_type = st.radio(
         "Выберите режим:",
-        ["🤖 Автоопределение", "🎭 Портрет", "🌄 Пейзаж"],
-        index=0
+        ["🤖 Автоопределение", "🎭 Только портрет", "🌄 Только пейзаж"],
+        index=0,
+        help="Автоопределение выберет модель автоматически по формату фото"
     )
     
-    enhancement_type = enhancement_type.split(" ")[1].lower()
+    # Преобразуем в тип для модели
+    if "портрет" in enhancement_type.lower():
+        model_type = 'portrait'
+    elif "пейзаж" in enhancement_type.lower():
+        model_type = 'landscape'
+    else:
+        model_type = 'auto'
     
     st.divider()
     
-    # Информация о моделях
-    st.subheader("📊 Информация")
-    
-    # Проверяем наличие моделей
-    realesrgan_exists = (MODELS_DIR / 'RealESRGAN_x4plus.pth').exists()
-    portrait_exists = (MODELS_DIR / 'enhanced_epoch_28_ratio_1.23.pth').exists()
-    
-    if realesrgan_exists:
-        file_size = os.path.getsize(MODELS_DIR / 'RealESRGAN_x4plus.pth') / (1024 * 1024)
-        st.success(f"✅ Real-ESRGAN: {file_size:.1f}MB")
-    else:
-        st.error("❌ Real-ESRGAN: отсутствует")
-    
-    if portrait_exists:
-        st.success("✅ Модель портретов: есть")
-    else:
-        st.warning("⚠️ Модель портретов: отсутствует")
-    
-    st.divider()
-    
-    # Информация о системе
-    st.subheader("💻 Система")
+    st.subheader("ℹ️ Информация")
     device_name = "GPU 🚀" if torch.cuda.is_available() else "CPU ⚡"
     st.write(f"Устройство: {device_name}")
-    
     st.write(f"Макс. размер файла: {MAX_FILE_SIZE_MB}MB")
 
-# Заголовок
-st.markdown('<h1 class="main-header">✨ AI Photo Enhancer Pro</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Улучшение качества фотографий с помощью нейросетей Real-ESRGAN и кастомных моделей</p>', unsafe_allow_html=True)
-
-# Проверяем наличие необходимых моделей
-missing_models = check_and_download_models()
-if missing_models:
-    st.warning("""
-    ⚠️ **Внимание! Не все модели найдены.**
-    
-    Для полноценной работы приложения необходимы:
-    1. **Real-ESRGAN_x4plus.pth** - для улучшения пейзажей
-    2. **enhanced_epoch_28_ratio_1.23.pth** - для улучшения портретов
-    
-    **Что делать:**
-    1. Нажмите кнопку "📥 Скачать Real-ESRGAN" в сайдбаре
-    2. Поместите вашу модель портретов в папку `models/`
-    3. Перезагрузите страницу
-    """)
-    
-    with st.expander("📋 Инструкция по скачиванию моделей", expanded=True):
-        st.markdown("""
-        ### Для Windows:
-        ```bash
-        # Создайте папку models
-        mkdir models
-        
-        # Скачайте Real-ESRGAN
-        curl -L https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -o models/RealESRGAN_x4plus.pth
-        ```
-        
-        ### Для Mac/Linux:
-        ```bash
-        mkdir -p models
-        wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -O models/RealESRGAN_x4plus.pth
-        ```
-        
-        ### Или в Python:
-        ```python
-        import requests
-        import os
-        
-        os.makedirs("models", exist_ok=True)
-        url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
-        
-        response = requests.get(url, stream=True)
-        with open("models/RealESRGAN_x4plus.pth", "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        ```
-        """)
-
 # Основной интерфейс
-tab1, tab2, tab3 = st.tabs(["🖼️ Улучшение фото", "📊 Сравнение", "ℹ️ О сервисе"])
+st.markdown('<p class="sub-header">Улучшение фотографий с помощью нейросетевых моделей</p>', unsafe_allow_html=True)
 
-with tab1:
-    # Загрузка фото
-    uploaded_file = st.file_uploader(
-        "📤 Загрузите фотографию для улучшения",
-        type=['jpg', 'jpeg', 'png', 'bmp', 'webp'],
-        help=f"Максимальный размер: {MAX_FILE_SIZE_MB}MB"
-    )
+# Загрузка фото
+uploaded_file = st.file_uploader(
+    "📤 Загрузите фотографию для улучшения",
+    type=['jpg', 'jpeg', 'png'],
+    help=f"Максимальный размер: {MAX_FILE_SIZE_MB}MB"
+)
+
+if uploaded_file is not None:
+    # Проверка размера
+    file_size = len(uploaded_file.getvalue()) / (1024 * 1024)
+    if file_size > MAX_FILE_SIZE_MB:
+        st.error(f"❌ Файл слишком большой ({file_size:.1f}MB)")
+        st.stop()
     
-    if uploaded_file is not None:
-        # Проверка размера
-        file_size = len(uploaded_file.getvalue()) / (1024 * 1024)  # MB
-        if file_size > MAX_FILE_SIZE_MB:
-            st.error(f"❌ Файл слишком большой ({file_size:.1f}MB). Максимум: {MAX_FILE_SIZE_MB}MB")
-            st.stop()
-        
-        # Загрузка изображения
-        image = Image.open(uploaded_file).convert('RGB')
-        
-        # Показываем оригинал
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📷 Оригинал")
-            st.image(image, use_column_width=True)
-            st.caption(f"Размер: {image.width}×{image.height} пикселей")
-        
-        # Кнопка улучшения
-        if st.button("✨ УЛУЧШИТЬ ФОТО", type="primary", use_container_width=True):
-            # Инициализация моделей
-            if 'models_manager' not in st.session_state:
-                models_manager, models_loaded = init_models()
-                st.session_state.models_manager = models_manager
-                st.session_state.models_loaded = models_loaded
+    # Загрузка изображения
+    image = Image.open(uploaded_file).convert('RGB')
+    
+    # Показываем оригинал
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📷 Оригинал")
+        st.image(image, use_column_width=True)
+        st.caption(f"Размер: {image.width}×{image.height} пикселей")
+    
+    # Кнопка улучшения
+    if st.button("✨ УЛУЧШИТЬ ФОТО", type="primary", use_container_width=True):
+        # Инициализация моделей
+        if 'models_manager' not in st.session_state:
+            models_manager, loaded_models = init_models()
+            st.session_state.models_manager = models_manager
+            st.session_state.loaded_models = loaded_models
+            
+            if not loaded_models:
+                st.error("❌ Не удалось загрузить ни одну модель!")
+                st.stop()
             else:
-                models_manager = st.session_state.models_manager
-                models_loaded = st.session_state.models_loaded
-            
-            if not models_loaded:
-                st.warning("⚠️ Модели не загружены. Используется базовое улучшение.")
-            
-            with st.spinner("🧠 ИИ обрабатывает изображение..."):
+                st.success(f"✅ Загружено моделей: {len(loaded_models)}")
+        
+        models_manager = st.session_state.models_manager
+        
+        with st.spinner("🧠 Нейросеть обрабатывает изображение..."):
+            try:
+                # Определяем какую модель использовать
+                if model_type == 'auto':
+                    # Автоматическое определение
+                    if image.width / image.height > 1.3:  # Широкое
+                        actual_model = 'landscape'
+                        model_name = "Real-ESRGAN (пейзажи)"
+                    else:  # Вертикальное или квадратное
+                        actual_model = 'portrait'
+                        model_name = "Кастомная CNN (портреты)"
+                else:
+                    actual_model = model_type
+                    model_name = "Real-ESRGAN" if model_type == 'landscape' else "Кастомная CNN"
+                
+                # Проверяем, что модель загружена
+                if actual_model not in models_manager.models:
+                    available = list(models_manager.models.keys())
+                    st.error(f"❌ Модель '{actual_model}' не загружена. Доступны: {available}")
+                    st.stop()
+                
+                # Прогресс бар
                 progress_bar = st.progress(0)
-                
-                # Имитация прогресса
-                for percent_complete in range(100):
+                for i in range(100):
                     time.sleep(0.01)
-                    progress_bar.progress(percent_complete + 1)
+                    progress_bar.progress(i + 1)
                 
-                # Улучшение фото
-                enhanced_image = enhance_image_advanced(
-                    image, 
-                    models_manager, 
-                    enhancement_type
-                )
+                # Улучшаем фото с помощью модели
+                enhanced_image = enhance_with_model(image, actual_model, models_manager)
                 
                 progress_bar.empty()
                 
@@ -672,24 +461,19 @@ with tab1:
                     st.caption(f"Новый размер: {enhanced_image.width}×{enhanced_image.height} пикселей")
                     
                     # Информация об улучшении
-                    with st.expander("📊 Детали улучшения"):
+                    with st.expander("📊 Детали обработки", expanded=True):
+                        st.write(f"**Использованная модель:** {model_name}")
                         st.write(f"**Тип улучшения:** {enhancement_type}")
                         st.write(f"**Исходный размер:** {image.width}×{image.height}")
                         st.write(f"**Финальный размер:** {enhanced_image.width}×{enhanced_image.height}")
                         
-                        if enhancement_type == 'portrait':
-                            st.write(f"**Модель:** Кастомная CNN")
+                        if actual_model == 'portrait':
+                            st.write(f"**Архитектура:** Residual CNN")
                             st.write(f"**Вход модели:** {PORTRAIT_MODEL_SIZE[0]}×{PORTRAIT_MODEL_SIZE[1]}")
-                            st.write(f"**Увеличение выхода:** ×{PORTRAIT_OUTPUT_SCALE}")
-                        elif enhancement_type == 'landscape':
-                            st.write(f"**Модель:** Real-ESRGAN")
-                            st.write(f"**Увеличение:** ×4")
+                            st.write(f"**Увеличение:** ×{PORTRAIT_OUTPUT_SCALE}")
                         else:
-                            if models_manager.models:
-                                if len(image.width / image.height) > 1.3:
-                                    st.write(f"**Определено:** Пейзаж (Real-ESRGAN)")
-                                else:
-                                    st.write(f"**Определено:** Портрет (Кастомная модель)")
+                            st.write(f"**Архитектура:** Real-ESRGAN")
+                            st.write(f"**Увеличение:** ×4")
                     
                     # Кнопка скачивания
                     enhanced_bytes = save_image(enhanced_image, 'PNG')
@@ -703,129 +487,56 @@ with tab1:
                         use_container_width=True
                     )
                 
-                st.success("✅ Фото успешно улучшено!")
+                st.success(f"✅ Фото успешно улучшено с помощью {model_name}!")
                 st.balloons()
+                
+                # Сравнение
+                st.divider()
+                st.subheader("🔄 Сравнение результатов")
+                
+                compare_col1, compare_col2 = st.columns(2)
+                with compare_col1:
+                    st.image(image, caption="ДО улучшения", use_column_width=True)
+                with compare_col2:
+                    st.image(enhanced_image, caption="ПОСЛЕ улучшения", use_column_width=True)
+                
+            except Exception as e:
+                st.error(f"❌ Ошибка при улучшении: {str(e)}")
+                st.info("Попробуйте другую фотографию или другой тип улучшения")
 
-with tab2:
-    st.header("🔄 Сравнение ДО и ПОСЛЕ")
+else:
+    # Домашняя страница
+    st.info("""
+    ### 🎯 Возможности нейросетевых моделей:
     
-    if uploaded_file is not None and 'enhanced_image' in locals():
-        col_before, col_after = st.columns(2)
-        
-        with col_before:
-            st.subheader("ДО улучшения")
-            st.image(image, use_column_width=True)
-        
-        with col_after:
-            st.subheader("ПОСЛЕ улучшения")
-            st.image(enhanced_image, use_column_width=True)
-        
-        # Статистика
-        st.divider()
-        st.subheader("📈 Статистика улучшения")
-        
-        col_stat1, col_stat2, col_stat3 = st.columns(3)
-        
-        with col_stat1:
-            st.metric(
-                "Разрешение",
-                f"{image.width}×{image.height}",
-                f"{enhanced_image.width}×{enhanced_image.height}"
-            )
-        
-        with col_stat2:
-            pixel_increase = ((enhanced_image.width * enhanced_image.height) / 
-                            (image.width * image.height))
-            st.metric(
-                "Количество пикселей",
-                f"{(image.width * image.height):,}",
-                f"{(enhanced_image.width * enhanced_image.height):,}",
-                delta=f"×{pixel_increase:.1f}"
-            )
-        
-        with col_stat3:
-            st.metric(
-                "Качество",
-                "Исходное",
-                "Улучшенное",
-                delta="Повышено"
-            )
-
-with tab3:
-    st.header("ℹ️ О сервисе")
+    **🎭 Кастомная модель для портретов:**
+    - Улучшение деталей лица и кожи
+    - Сохранение естественных цветов
+    - Оптимальная обработка для вертикальных фото
     
-    st.markdown("""
-    ### ✨ Возможности сервиса
+    **🌄 Real-ESRGAN для пейзажей:**
+    - Увеличение разрешения в 4 раза
+    - Улучшение текстур и деталей
+    - Идеально для широкоформатных фото
     
-    **🎯 Основные функции:**
-    - Увеличение разрешения фотографий
-    - Улучшение детализации и резкости
-    - Автоматическое определение типа изображения
-    - Поддержка различных форматов
-    
-    **🧠 Используемые технологии:**
-    
-    1. **Real-ESRGAN** для пейзажей:
-       - Увеличение ×4 (до 4K)
-       - Сохранение деталей
-       - Улучшение текстур
-    
-    2. **Кастомная CNN-модель** для портретов:
-       - Входной размер: 128×128 пикселей
-       - Увеличение выхода: ×2
-       - Сохранение качества лиц
-    
-    **📊 Особенности:**
-    - Изображение **никогда не уменьшается**
-    - Результат всегда сохраняется или увеличивается
-    - Автоматический выбор оптимальной модели
-    
-    ### 🚀 Как использовать:
-    1. Загрузите фотографию
-    2. Выберите тип улучшения (или оставьте авто)
-    3. Нажмите "Улучшить фото"
-    4. Скачайте результат
+    ### 📋 Как использовать:
+    1. **Загрузите** фотографию (кнопка выше)
+    2. **Выберите** тип улучшения в сайдбаре
+    3. **Нажмите** "Улучшить фото"
+    4. **Скачайте** результат
     
     ### 💡 Советы:
-    - Для портретов используйте режим "Портрет"
-    - Для пейзажей используйте режим "Пейзаж"
-    - "Автоопределение" подбирает модель автоматически
-    - Используйте исходные фото хорошего качества
+    - Используйте **"Автоопределение"** для автоматического выбора модели
+    - Для **портретов** выбирайте соответствующий режим
+    - Для **пейзажей** используйте Real-ESRGAN
+    - Модели работают только если файлы загружены в папку `models/`
     """)
-    
-    st.divider()
-    
-    col_info1, col_info2, col_info3 = st.columns(3)
-    
-    with col_info1:
-        st.markdown("""
-        ### 🎭 Портреты
-        - Улучшение деталей лица
-        - Сохранение естественности
-        - Улучшение кожи
-        """)
-    
-    with col_info2:
-        st.markdown("""
-        ### 🌄 Пейзажи
-        - Увеличение до 4K
-        - Улучшение текстур
-        - Цветокоррекция
-        """)
-    
-    with col_info3:
-        st.markdown("""
-        ### 🏙️ Архитектура
-        - Улучшение линий
-        - Детализация
-        - Резкость
-        """)
 
 # Футер
 st.divider()
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 20px;">
-    <p>© 2024 AI Photo Enhancer Pro | Powered by Real-ESRGAN & Custom CNN Models</p>
-    <p>Streamlit · PyTorch · OpenCV</p>
+    <p>© 2024 AI Photo Enhancer Pro | Используются только нейросетевые модели</p>
+    <p>Real-ESRGAN + Кастомная CNN | Streamlit Cloud</p>
 </div>
 """, unsafe_allow_html=True)
