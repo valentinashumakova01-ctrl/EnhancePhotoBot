@@ -1,333 +1,261 @@
-# app.py
 import streamlit as st
 import torch
-from PIL import Image
-import io
-import os
 import numpy as np
-from torchvision import transforms
+from PIL import Image
+import os
+import urllib.request
+import time
+from pathlib import Path
 
-# Должно быть ПЕРВОЙ командой
+# Настройки страницы
 st.set_page_config(
-    page_title="Улучшение изображений",
-    page_icon="🖼️",
+    page_title="Улучшение качества пейзажных фото",
+    page_icon="🌄",
     layout="wide"
 )
 
-st.title("🖼️ Улучшение качества изображений с нейросетью")
-st.write("Загрузите изображение для обработки нейросетью")
+# Заголовок приложения
+st.title("🌄 Улучшение качества пейзажных фото")
+st.markdown("Использует модель Real-ESRGAN для улучшения качества изображений в 4 раза")
 
-# 1. Классы модели (ТОЧНО как в Colab)
-class ResidualBlock(torch.nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.block = torch.nn.Sequential(
-            torch.nn.Conv2d(channels, channels, 3, padding=1),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Conv2d(channels, channels, 3, padding=1),
-        )
-    def forward(self, x):
-        return x + self.block(x)
-
-class StrongGenerator(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.initial = torch.nn.Sequential(
-            torch.nn.Conv2d(3, 128, 3, padding=1),
-            torch.nn.ReLU(inplace=True)
-        )
-        self.res_blocks = torch.nn.Sequential(
-            ResidualBlock(128),
-            ResidualBlock(128),
-            ResidualBlock(128),
-            ResidualBlock(128),
-            ResidualBlock(128),
-            ResidualBlock(128)
-        )
-        self.final = torch.nn.Sequential(
-            torch.nn.Conv2d(128, 64, 3, padding=1),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Conv2d(64, 3, 3, padding=1)
-        )
-    def forward(self, x):
-        identity = x
-        x = self.initial(x)
-        x = self.res_blocks(x)
-        x = self.final(x)
-        return identity + 0.3 * x
-
-# 2. Загрузка модели с кэшированием
+# Создаем директории
 @st.cache_resource
-def load_model():
-    model_path = "models/enhanced_epoch_28_ratio_1.23.pth"
+def setup_directories():
+    """Создает необходимые директории"""
+    models_dir = Path("models")
+    uploads_dir = Path("uploads")
+    results_dir = Path("results")
     
-    if not os.path.exists(model_path):
-        st.error(f"❌ Файл модели не найден: {model_path}")
-        return None, None
+    models_dir.mkdir(exist_ok=True)
+    uploads_dir.mkdir(exist_ok=True)
+    results_dir.mkdir(exist_ok=True)
     
-    try:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        
-        # Пробуем разные способы загрузки для PyTorch 2.10.0
-        checkpoint = None
-        
-        # Способ 1: Стандартная загрузка
-        try:
-            checkpoint = torch.load(model_path, map_location=device)
-            st.success("✅ Модель загружена стандартным способом")
-        except:
-            # Способ 2: С weights_only=False
-            try:
-                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
-                st.success("✅ Модель загружена с weights_only=False")
-            except Exception as e2:
-                st.error(f"❌ Ошибка загрузки: {e2}")
-                return None, None
-        
-        # Создаем и загружаем модель
-        model = StrongGenerator().to(device)
-        
-        # Ищем правильный ключ в checkpoint
-        if checkpoint is not None:
-            # Пробуем разные возможные ключи
-            if 'generator' in checkpoint:
-                model.load_state_dict(checkpoint['generator'])
-                st.success("✅ Веса загружены (ключ 'generator')")
-            elif 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
-                st.success("✅ Веса загружены (ключ 'model_state_dict')")
-            elif 'state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['state_dict'])
-                st.success("✅ Веса загружены (ключ 'state_dict')")
-            else:
-                # Пробуем загрузить напрямую
-                try:
-                    model.load_state_dict(checkpoint)
-                    st.success("✅ Веса загружены напрямую")
-                except Exception as e:
-                    st.error(f"❌ Не удалось загрузить веса: {e}")
-                    # Показываем какие ключи есть
-                    if isinstance(checkpoint, dict):
-                        st.info(f"Доступные ключи: {list(checkpoint.keys())}")
-                    return None, None
-            
-            model.eval()
-            return model, device
-        
-    except Exception as e:
-        st.error(f"❌ Ошибка при создании модели: {e}")
-        return None, None
+    return models_dir, uploads_dir, results_dir
 
-# 3. Функция обработки изображения нейросетью
-def enhance_image_with_model(image, model, device):
-    """Обработка изображения нейросетью (как в Colab)"""
+models_dir, uploads_dir, results_dir = setup_directories()
+
+# Функция для загрузки модели
+@st.cache_resource
+def download_and_load_model():
+    """Загружает и загружает модель Real-ESRGAN"""
+    
+    # URL модели
+    model_url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+    model_path = models_dir / "RealESRGAN_x4plus.pth"
+    
+    progress_bar = None
+    status_text = None
+    
+    # Проверяем, есть ли уже модель
+    if not model_path.exists():
+        with st.spinner("Загрузка модели Real-ESRGAN (1.07 GB)... Это может занять несколько минут"):
+            # Создаем индикатор прогресса
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            def download_progress(count, block_size, total_size):
+                percent = int(count * block_size * 100 / total_size)
+                progress_bar.progress(percent / 100)
+                status_text.text(f"Загрузка: {percent}%")
+            
+            try:
+                # Загружаем модель
+                urllib.request.urlretrieve(
+                    model_url, 
+                    model_path, 
+                    reporthook=download_progress
+                )
+                st.success("✅ Модель успешно загружена!")
+                time.sleep(1)
+                progress_bar.empty()
+                status_text.empty()
+            except Exception as e:
+                st.error(f"Ошибка при загрузке модели: {e}")
+                return None
+    else:
+        st.info("✅ Модель уже загружена")
+    
+    # Загружаем архитектуру модели
     try:
-        # Преобразования как в Colab
-        transform = transforms.Compose([
-            transforms.Resize((128, 128)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-        ])
+        # Импортируем здесь, чтобы избежать ошибок при отсутствии зависимостей
+        from basicsr.archs.rrdbnet_arch import RRDBNet
+        from realesrgan import RealESRGANer
         
-        # Подготовка тензора
-        input_tensor = transform(image).unsqueeze(0).to(device)
+        # Создаем модель
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
         
-        # Обработка моделью
-        with torch.no_grad():
-            output_tensor = model(input_tensor)
+        # Создаем улучшатель
+        upsampler = RealESRGANer(
+            scale=4,
+            model_path=str(model_path),
+            model=model,
+            tile=400,  # Размер тайла для обработки больших изображений
+            tile_pad=10,
+            pre_pad=0,
+            half=False  # Используем float32 для лучшей точности
+        )
         
-        # Конвертация обратно в изображение
-        output_tensor = output_tensor.squeeze(0).cpu()
+        return upsampler
+    except ImportError:
+        st.error("""
+        **Требуемые библиотеки не установлены!**
         
-        # Денормализация
-        output_img = output_tensor * 0.5 + 0.5
-        output_img = torch.clamp(output_img, 0, 1)
+        Установите их командой:
+        ```bash
+        pip install basicsr facexlib gfpgan realesrgan
+        ```
         
-        # Конвертация в PIL Image
-        output_img = transforms.ToPILImage()(output_img)
-        
-        return output_img
-        
-    except Exception as e:
-        st.error(f"❌ Ошибка при обработке изображения: {e}")
+        Для Windows может потребоваться установить Visual Studio Build Tools.
+        """)
         return None
 
-# 4. Загружаем модель
-st.markdown("---")
-with st.spinner("🔄 Загружаем нейросеть..."):
-    model, device = load_model()
-
-if model is None:
-    st.error("Не удалось загрузить модель. Проверьте файл модели.")
-    st.stop()
-
-# 5. Интерфейс
-uploaded_file = st.file_uploader(
-    "Выберите изображение для улучшения", 
-    type=['png', 'jpg', 'jpeg', 'bmp', 'webp']
-)
-
-if uploaded_file:
+# Функция для улучшения изображения
+def enhance_image(input_image, upsampler):
+    """Улучшает качество изображения"""
     try:
-        # Открываем изображение
-        image = Image.open(uploaded_file).convert('RGB')
-        st.success(f"✅ Изображение загружено: {image.size[0]}×{image.size[1]} пикселей")
+        # Конвертируем PIL Image в numpy array
+        img = np.array(input_image)
         
-        # Показываем оригинал
-        st.subheader("📷 Оригинальное изображение")
+        # Улучшаем изображение
+        output, _ = upsampler.enhance(img, outscale=4)
         
-        col1, col2 = st.columns(2)
-        with col1:
-            # Полный размер
-            st.image(image, caption="Полный размер", use_column_width=True)
+        # Конвертируем обратно в PIL Image
+        output_img = Image.fromarray(output)
         
-        with col2:
-            # Уменьшенный до 128x128 (как будет обрабатываться)
-            preview_128 = image.resize((128, 128))
-            st.image(preview_128, caption="Для обработки (128×128)", use_column_width=True)
-        
-        # Кнопка обработки
-        st.markdown("---")
-        if st.button("✨ ЗАПУСТИТЬ НЕЙРОСЕТЬ", type="primary", use_container_width=True):
-            with st.spinner("Нейросеть улучшает качество изображения..."):
-                # Обработка нейросетью
-                enhanced = enhance_image_with_model(image, model, device)
-                
-                if enhanced is not None:
-                    # Показываем результаты
-                    st.success("✅ Обработка завершена!")
-                    
-                    # Сравнение
-                    st.subheader("🎯 Сравнение до и после")
-                    
-                    # Создаем оригинал того же размера для сравнения
-                    original_128 = image.resize((128, 128))
-                    
-                    comp_col1, comp_col2 = st.columns(2)
-                    
-                    with comp_col1:
-                        st.markdown("### **ДО** обработки")
-                        st.image(original_128, use_column_width=True)
-                        st.caption("Исходное изображение 128×128")
-                    
-                    with comp_col2:
-                        st.markdown("### **ПОСЛЕ** обработки")
-                        st.image(enhanced, use_column_width=True)
-                        st.caption("Улучшенное нейросетью 128×128")
-                    
-                    # Увеличенные фрагменты для сравнения деталей
-                    st.markdown("---")
-                    st.subheader("🔍 Сравнение деталей (увеличенные фрагменты)")
-                    
-                    # Берем центральный фрагмент
-                    crop_size = 64
-                    original_crop = original_128.crop(
-                        (32, 32, 32 + crop_size, 32 + crop_size)
-                    )
-                    enhanced_crop = enhanced.crop(
-                        (32, 32, 32 + crop_size, 32 + crop_size)
-                    )
-                    
-                    detail_col1, detail_col2 = st.columns(2)
-                    
-                    with detail_col1:
-                        st.image(
-                            original_crop.resize((256, 256)), 
-                            caption="Фрагмент оригинала (×4)",
-                            use_column_width=True
-                        )
-                    
-                    with detail_col2:
-                        st.image(
-                            enhanced_crop.resize((256, 256)), 
-                            caption="Фрагмент после улучшения (×4)",
-                            use_column_width=True
-                        )
-                    
-                    # Скачивание
-                    st.markdown("---")
-                    st.subheader("💾 Скачать результат")
-                    
-                    buf = io.BytesIO()
-                    enhanced.save(buf, format="PNG", optimize=True)
-                    
-                    col_dl1, col_dl2 = st.columns(2)
-                    
-                    with col_dl1:
-                        st.download_button(
-                            "📥 Скачать улучшенное (128×128)",
-                            buf.getvalue(),
-                            "enhanced_128x128.png",
-                            "image/png",
-                            use_container_width=True
-                        )
-                    
-                    with col_dl2:
-                        buf_original = io.BytesIO()
-                        original_128.save(buf_original, format="PNG", optimize=True)
-                        st.download_button(
-                            "📥 Скачать оригинал (128×128)",
-                            buf_original.getvalue(),
-                            "original_128x128.png",
-                            "image/png",
-                            use_container_width=True
-                        )
-                    
-                    # Информация о модели
-                    st.markdown("---")
-                    with st.expander("📊 Техническая информация о обработке"):
-                        st.write(f"""
-                        ### Параметры обработки:
-                        
-                        - **Модель**: StrongGenerator с 6 остаточными блоками
-                        - **Архитектура**: Skip connection с коэффициентом 0.3
-                        - **Размер входа/выхода**: 128×128 пикселей
-                        - **Устройство**: {device.upper()}
-                        - **PyTorch версия**: {torch.__version__}
-                        
-                        ### Преобразования:
-                        1. Resize до 128×128
-                        2. ToTensor()
-                        3. Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-                        4. Обработка нейросетью
-                        5. Denormalize: output * 0.5 + 0.5
-                        6. Clamp(0, 1)
-                        7. Конвертация в PIL Image
-                        """)
-                
-                else:
-                    st.error("Не удалось обработать изображение")
-    
+        return output_img
     except Exception as e:
-        st.error(f"❌ Ошибка: {e}")
+        st.error(f"Ошибка при улучшении изображения: {e}")
+        return None
 
-else:
-    st.info("👆 Загрузите изображение выше для улучшения качества нейросетью")
+# Основной интерфейс
+def main():
+    # Загружаем модель
+    with st.spinner("Загрузка модели..."):
+        upsampler = download_and_load_model()
+    
+    if upsampler is None:
+        st.warning("Пожалуйста, установите необходимые библиотеки и перезапустите приложение")
+        return
+    
+    # Создаем две колонки для интерфейса
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.header("📤 Загрузите изображение")
+        
+        # Загрузка файла
+        uploaded_file = st.file_uploader(
+            "Выберите изображение",
+            type=['jpg', 'jpeg', 'png', 'bmp', 'tiff'],
+            help="Загрузите изображение пейзажа для улучшения качества"
+        )
+        
+        if uploaded_file is not None:
+            # Открываем изображение
+            input_image = Image.open(uploaded_file)
+            
+            # Показываем оригинальное изображение
+            st.image(input_image, caption="Оригинальное изображение", use_column_width=True)
+            
+            # Показываем информацию об изображении
+            st.info(f"Размер: {input_image.size[0]}x{input_image.size[1]} пикселей")
+            
+            # Кнопка для улучшения
+            if st.button("🚀 Улучшить качество", type="primary"):
+                with st.spinner("Улучшение качества..."):
+                    # Улучшаем изображение
+                    enhanced_image = enhance_image(input_image, upsampler)
+                    
+                    if enhanced_image is not None:
+                        # Сохраняем результаты
+                        input_path = uploads_dir / uploaded_file.name
+                        output_path = results_dir / f"enhanced_{uploaded_file.name}"
+                        
+                        input_image.save(input_path)
+                        enhanced_image.save(output_path)
+                        
+                        # Показываем результат во второй колонке
+                        with col2:
+                            st.header("✨ Результат")
+                            st.image(enhanced_image, caption="Улучшенное изображение", use_column_width=True)
+                            st.success(f"Новый размер: {enhanced_image.size[0]}x{enhanced_image.size[1]} пикселей")
+                            
+                            # Скачивание результата
+                            with open(output_path, "rb") as file:
+                                btn = st.download_button(
+                                    label="📥 Скачать улучшенное изображение",
+                                    data=file,
+                                    file_name=f"enhanced_{uploaded_file.name}",
+                                    mime="image/png"
+                                )
+                        
+                        # Показываем сравнение
+                        st.markdown("---")
+                        st.subheader("📊 Сравнение")
+                        
+                        compare_col1, compare_col2 = st.columns(2)
+                        with compare_col1:
+                            st.image(input_image, caption="До", use_column_width=True)
+                        with compare_col2:
+                            st.image(enhanced_image, caption="После", use_column_width=True)
+    
+    # Примеры изображений
+    if uploaded_file is None:
+        with col2:
+            st.header("📋 Примеры")
+            st.markdown("""
+            **Рекомендуемые типы изображений:**
+            - Пейзажи
+            - Природа
+            - Городские виды
+            - Архитектура
+            
+            **Форматы:** JPG, PNG, BMP, TIFF
+            
+            **Максимальный размер:** 3000x3000 пикселей
+            """)
+            
+            st.info("""
+            ⚠️ **Примечание:**
+            - Обработка может занять несколько минут
+            - Изображение будет увеличено в 4 раза
+            - Для лучших результатов используйте качественные исходные изображения
+            """)
+    
+    # Информация о модели
+    with st.expander("ℹ️ О модели Real-ESRGAN"):
+        st.markdown("""
+        **Real-ESRGAN** - это модель для сверхразрешения изображений, специально обученная для обработки:
+        
+        - **Пейзажей** - горы, леса, водопады
+        - **Городских видов** - здания, улицы
+        - **Природных сцен** - закаты, рассветы, облака
+        
+        **Особенности:**
+        - Увеличение разрешения в 4 раза
+        - Улучшение детализации
+        - Сохранение естественных цветов
+        - Обработка артефактов сжатия
+        """)
 
-# Информация о приложении
-with st.expander("ℹ️ О нейросети"):
-    st.markdown("""
-    ## 🧠 Как работает нейросеть?
+if __name__ == "__main__":
+    # Предупреждение о зависимостях
+    st.sidebar.title("⚠️ Требования")
+    st.sidebar.markdown("""
+    Для работы приложения необходимо установить:
     
-    Эта нейросеть использует архитектуру **StrongGenerator** с **остаточными блоками (Residual Blocks)**:
+    ```bash
+    pip install streamlit pillow torch torchvision numpy
+    pip install basicsr facexlib gfpgan realesrgan
+    ```
     
-    ### Основные компоненты:
-    
-    1. **Начальный слой**: Conv2d(3, 128) + ReLU
-    2. **6 остаточных блоков**: Каждый содержит 2 сверточных слоя
-    3. **Финальные слои**: Conv2d(128, 64) + ReLU + Conv2d(64, 3)
-    4. **Skip connection**: Исходное изображение складывается с результатом с коэффициентом 0.3
-    
-    ### Принцип работы:
-    - Нейросеть учится находить разницу между низким и высоким качеством
-    - Добавляет детали и улучшает резкость
-    - Сохраняет общую структуру изображения
-    
-    ### Технические детали:
-    - Обучена на датасете изображений
-    - Коэффициент улучшения: 1.23× (судя по названию файла)
-    - Эпоха обучения: 28
+    **Первая загрузка модели может занять 10-15 минут.**
     """)
-
-st.markdown("---")
-st.caption("Нейросеть для улучшения качества изображений | PyTorch 2.10.0 | Streamlit Cloud")
+    
+    # Информация о системе
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Информация о системе:**")
+    st.sidebar.markdown(f"Модель: RealESRGAN_x4plus.pth")
+    st.sidebar.markdown(f"Размер модели: 1.07 GB")
+    
+    main()
