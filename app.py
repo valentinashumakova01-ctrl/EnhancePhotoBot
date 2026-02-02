@@ -117,7 +117,7 @@ def load_model():
     except Exception as e:
         st.error(f"❌ Ошибка при создании модели: {e}")
         
-return None, None
+        return None, None
 
 # 3. Функция обработки изображения нейросетью
 def enhance_image_with_model(image, model, device):
