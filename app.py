@@ -59,7 +59,7 @@ class StrongGenerator(torch.nn.Module):
 # 2. Загрузка модели с кэшированием
 @st.cache_resource
 def load_model():
-    model_path = "models/enhanced_epoch_28_ratio_1.23.pth"
+    model_path = "weights/enhanced_epoch_30_ratio_1.23.pth"
     
     if not os.path.exists(model_path):
         st.error(f"❌ Файл модели не найден: {model_path}")
