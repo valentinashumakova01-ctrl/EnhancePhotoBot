@@ -336,4 +336,4 @@ with st.expander("ℹ️ О нейросети"):
     """)
 
 st.markdown("---")
-st.caption("Нейросеть для улучшения качества изображений | PyTorch 2.10.0 | Streamlit Cloud") правильное в конце описание модели
+st.caption("Нейросеть для улучшения качества изображений | PyTorch 2.10.0 | Streamlit Cloud")
