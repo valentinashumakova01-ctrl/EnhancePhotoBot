@@ -1,11 +1,7 @@
-# 🖼️ Image Enhancement AI
+# 🖼️ EnhancePhotoBot
 
 **Улучшение качества изображений с помощью нейросети на PyTorch**  
 *Web-приложение для автоматического улучшения деталей и резкости изображений*
-
-[![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=Streamlit&logoColor=white)](https://streamlit.io/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![Python](https://img.shields.io/badge/Python-3.8+-blue?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 
 ## ✨ Демо
 
