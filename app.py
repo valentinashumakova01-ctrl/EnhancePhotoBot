@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import torch
 from PIL import Image
@@ -7,7 +6,6 @@ import os
 import numpy as np
 from torchvision import transforms
 
-# Должно быть ПЕРВОЙ командой
 st.set_page_config(
     page_title="Улучшение изображений",
     page_icon="🖼️",
@@ -17,7 +15,6 @@ st.set_page_config(
 st.title("🖼️ Улучшение качества изображений с нейросетью")
 st.write("Загрузите изображение для обработки нейросетью")
 
-# 1. Классы модели (ТОЧНО как в Colab)
 class ResidualBlock(torch.nn.Module):
     def __init__(self, channels):
         super().__init__()
@@ -56,22 +53,19 @@ class StrongGenerator(torch.nn.Module):
         x = self.final(x)
         return identity + 0.3 * x
 
-# 2. Загрузка модели с кэшированием
 @st.cache_resource
 def load_model():
-    model_path = "weights/enhanced_epoch_25_ratio_1.17.pth"
+    model_path = "weights/enhanced_epoch_30_ratio_1.23.pth"
     
     if not os.path.exists(model_path):
-        st.error(f"❌ Файл модели не найден: {model_path}")
+        st.error(f"Файл модели не найден: {model_path}")
         return None, None
     
     try:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
-        # Пробуем разные способы загрузки для PyTorch 2.10.0
         checkpoint = None
         
-        # Способ 1: Стандартная загрузка
         try:
             checkpoint = torch.load(model_path, map_location=device)
             st.success("✅ Модель загружена стандартным способом")
